@@ -1,6 +1,7 @@
 #include <android/log.h>
 #include <jni.h>
 #include <llama.h>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -9,10 +10,12 @@
 static llama_model *model = nullptr;
 static llama_context *ctx = nullptr;
 static const struct llama_vocab *vocab = nullptr;
+static std::mutex model_mutex;
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_llmapp_MainActivity_loadModel(JNIEnv *env, jobject thiz,
                                                jstring model_path_j) {
+  std::lock_guard<std::mutex> lock(model_mutex);
   const char *model_path = env->GetStringUTFChars(model_path_j, nullptr);
 
   llama_backend_init();
@@ -29,7 +32,7 @@ Java_com_example_llmapp_MainActivity_loadModel(JNIEnv *env, jobject thiz,
 
   vocab = llama_model_get_vocab(model);
   llama_context_params ctx_params = llama_context_default_params();
-  ctx_params.n_ctx = 1024; // Increased context for chat
+  ctx_params.n_ctx = 1024;
 
   ctx = llama_new_context_with_model(model, ctx_params);
 
@@ -48,6 +51,7 @@ Java_com_example_llmapp_MainActivity_loadModel(JNIEnv *env, jobject thiz,
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_llmapp_MainActivity_generateResponse(JNIEnv *env, jobject thiz,
                                                       jstring prompt_j) {
+  std::unique_lock<std::mutex> lock(model_mutex);
   if (!ctx || !model) {
     return;
   }
@@ -60,6 +64,9 @@ Java_com_example_llmapp_MainActivity_generateResponse(JNIEnv *env, jobject thiz,
   jmethodID onTokenGenerated =
       env->GetMethodID(clazz, "onTokenGenerated", "(Ljava/lang/String;)V");
   jmethodID onComplete = env->GetMethodID(clazz, "onComplete", "()V");
+
+  // Clear previous context state so it doesn't get stuck on the old prompt
+  llama_memory_clear(llama_get_memory(ctx), true);
 
   // Tokenize
   int n_tokens_max = prompt.length() + 2;
@@ -97,6 +104,11 @@ Java_com_example_llmapp_MainActivity_generateResponse(JNIEnv *env, jobject thiz,
   struct llama_sampler *smpl = llama_sampler_init_greedy();
 
   for (int i = 0; i < 512; i++) {
+    // Check if context has been invalidated during generation
+    if (!ctx || !model) {
+        break;
+    }
+
     llama_token new_token = llama_sampler_sample(smpl, ctx, -1);
 
     if (llama_vocab_is_eog(vocab, new_token))
@@ -117,7 +129,12 @@ Java_com_example_llmapp_MainActivity_generateResponse(JNIEnv *env, jobject thiz,
     batch.logits[0] = true;
     batch.n_tokens = 1;
 
-    if (llama_decode(ctx, batch) != 0) {
+    // Release lock briefly during compute-heavy decode to allow unloadModel to acquire it if needed
+    lock.unlock();
+    int decode_res = llama_decode(ctx, batch);
+    lock.lock();
+
+    if (decode_res != 0) {
       break;
     }
   }
@@ -129,6 +146,7 @@ Java_com_example_llmapp_MainActivity_generateResponse(JNIEnv *env, jobject thiz,
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_llmapp_MainActivity_unloadModel(JNIEnv *env, jobject thiz) {
+  std::lock_guard<std::mutex> lock(model_mutex);
   if (ctx) {
     llama_free(ctx);
     ctx = nullptr;
@@ -137,5 +155,6 @@ Java_com_example_llmapp_MainActivity_unloadModel(JNIEnv *env, jobject thiz) {
     llama_model_free(model);
     model = nullptr;
   }
+  vocab = nullptr;
   llama_backend_free();
 }

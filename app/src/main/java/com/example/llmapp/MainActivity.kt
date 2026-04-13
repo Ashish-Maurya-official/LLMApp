@@ -10,30 +10,26 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import com.example.llmapp.ui.theme.AiGreen
 import com.example.llmapp.ui.theme.LLMAppTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -86,7 +82,8 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     hasPermission = hasPermission,
                     onRequestPermission = { requestStoragePermission() },
-                    onSelectModel = { modelPickerLauncher.launch(arrayOf("*/*")) }
+                    onSelectModel = { modelPickerLauncher.launch(arrayOf("*/*")) },
+                    onNewChat = { viewModel.clearMessages() }
                 )
             }
         }
@@ -153,14 +150,14 @@ class MainActivity : ComponentActivity() {
         viewModel: ChatViewModel,
         hasPermission: Boolean,
         onRequestPermission: () -> Unit,
-        onSelectModel: () -> Unit
+        onSelectModel: () -> Unit,
+        onNewChat: () -> Unit
     ) {
         val messages = viewModel.messages
         val status by viewModel.status
         val isGenerating by viewModel.isGenerating
         val listState = rememberLazyListState()
 
-        // Auto-scroll to bottom when new messages arrive
         LaunchedEffect(messages.size, messages.lastOrNull()?.text) {
             if (messages.isNotEmpty()) {
                 listState.animateScrollToItem(messages.size - 1)
@@ -169,20 +166,25 @@ class MainActivity : ComponentActivity() {
 
         Scaffold(
             topBar = {
-                CenterAlignedTopAppBar(
+                TopAppBar(
                     title = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("LLM Chat", fontWeight = FontWeight.Bold)
-                            Text(status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                        Column {
+                            Text("LLM Assistant", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                            Text(status, style = MaterialTheme.typography.labelSmall, color = AiGreen)
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onNewChat) {
+                            Icon(Icons.Default.Add, contentDescription = "New Chat")
                         }
                     },
                     actions = {
                         IconButton(onClick = onSelectModel) {
-                            Icon(androidx.compose.material.icons.Icons.Default.Folder, contentDescription = "Select Model")
+                            Icon(Icons.Default.Folder, contentDescription = "Select Model")
                         }
                     },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background
                     )
                 )
             },
@@ -206,11 +208,10 @@ class MainActivity : ComponentActivity() {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        contentPadding = PaddingValues(bottom = 16.dp)
                     ) {
                         items(messages) { message ->
-                            MessageBubble(message)
+                            MessageRow(message)
                         }
                     }
                 }
@@ -219,34 +220,55 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun MessageBubble(message: ChatMessage) {
-        val alignment = if (message.isUser) Alignment.End else Alignment.Start
+    fun MessageRow(message: ChatMessage) {
         val bgColor = if (message.isUser) {
-            Brush.horizontalGradient(listOf(Color(0xFF6200EE), Color(0xFF3700B3)))
+            MaterialTheme.colorScheme.background
         } else {
-            Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.surfaceVariant))
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
         }
-        val textColor = if (message.isUser) Color.White else MaterialTheme.colorScheme.onSurface
 
-        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = alignment) {
-            Box(
-                modifier = Modifier
-                    .clip(
-                        RoundedCornerShape(
-                            topStart = 16.dp,
-                            topEnd = 16.dp,
-                            bottomStart = if (message.isUser) 16.dp else 0.dp,
-                            bottomEnd = if (message.isUser) 0.dp else 16.dp
-                        )
-                    )
-                    .background(bgColor)
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(bgColor)
+                .padding(vertical = 24.dp, horizontal = 16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
             ) {
-                Text(
-                    text = message.text,
-                    color = if (message.isError) MaterialTheme.colorScheme.error else textColor,
-                    fontSize = 15.sp
-                )
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (message.isUser) Color(0xFF5436DA) else AiGreen),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (message.isUser) Icons.Default.Person else Icons.Default.SmartToy,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.width(16.dp))
+                
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (message.isUser) "You" else "Assistant",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = message.text,
+                        color = if (message.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground,
+                        fontSize = 16.sp,
+                        lineHeight = 24.sp
+                    )
+                }
             }
         }
     }
@@ -256,8 +278,7 @@ class MainActivity : ComponentActivity() {
         var text by remember { mutableStateOf("") }
 
         Surface(
-            tonalElevation = 8.dp,
-            shadowElevation = 8.dp,
+            tonalElevation = 2.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
@@ -265,38 +286,50 @@ class MainActivity : ComponentActivity() {
                     .padding(16.dp)
                     .navigationBarsPadding()
                     .imePadding(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Bottom
             ) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    placeholder = { Text("Ask anything...") },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(24.dp),
-                    maxLines = 4,
-                    enabled = !isGenerating
+                    placeholder = { Text("Message...") },
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(bottom = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    maxLines = 5,
+                    enabled = !isGenerating,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AiGreen.copy(alpha = 0.5f),
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                    )
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                FloatingActionButton(
+                Spacer(modifier = Modifier.width(12.dp))
+                
+                IconButton(
                     onClick = {
                         if (text.isNotBlank() && !isGenerating) {
                             onSend(text)
                             text = ""
                         }
                     },
-                    containerColor = if (isGenerating) Color.Gray else MaterialTheme.colorScheme.primary,
-                    contentColor = Color.White,
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier.size(56.dp)
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (text.isNotBlank() && !isGenerating) AiGreen else Color.Transparent)
+                        .size(40.dp)
                 ) {
                     if (isGenerating) {
                         CircularProgressIndicator(
-                            color = Color.White,
-                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Icon(Icons.Default.Send, contentDescription = "Send")
+                        Icon(
+                            imageVector = Icons.Default.ArrowUpward,
+                            contentDescription = "Send",
+                            tint = if (text.isNotBlank()) Color.White else MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
@@ -314,7 +347,7 @@ class MainActivity : ComponentActivity() {
             Spacer(modifier = Modifier.height(8.dp))
             Text("The app needs access to load the LLM model file.")
             Spacer(modifier = Modifier.height(24.dp))
-            Button(onClick = onRequestPermission) {
+            Button(onClick = onRequestPermission, shape = RoundedCornerShape(8.dp)) {
                 Text("Grant Permission")
             }
         }

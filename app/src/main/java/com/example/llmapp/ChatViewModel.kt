@@ -57,4 +57,11 @@ class ChatViewModel : ViewModel() {
         _messages.add(ChatMessage(error, isUser = false, isError = true))
         _isGenerating.value = false
     }
+
+    fun clearMessages() {
+        _messages.clear()
+        _status.value = "Ready"
+        _isGenerating.value = false
+        currentModelResponse = ""
+    }
 }

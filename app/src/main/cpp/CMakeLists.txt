@@ -1,42 +1,69 @@
 cmake_minimum_required(VERSION 3.22.1)
 
-project(llm_jni)
+project(llmapp)
 
-# Include headers
-include_directories(/Users/apple/Documents/ashish/llama.cpp)
-include_directories(/Users/apple/Documents/ashish/llama.cpp/include)
-include_directories(/Users/apple/Documents/ashish/llama.cpp/ggml/include)
+# Include paths
+set(LLAMA_DIR ${CMAKE_SOURCE_DIR}/llama)
+include_directories(${LLAMA_DIR}/include)
+include_directories(${LLAMA_DIR}/src)
+include_directories(${LLAMA_DIR}/ggml/include)
+include_directories(${LLAMA_DIR}/ggml/src)
+include_directories(${LLAMA_DIR}/ggml/src/ggml-cpu)
 
-# Your JNI library
-add_library(
-        llm_jni
-        SHARED
-        llm_jni.cpp
-)
-
-# Android log
+# Android dependencies
 find_library(log-lib log)
 
-# 👇 IMPORT llama
-add_library(llama SHARED IMPORTED)
-set_target_properties(llama PROPERTIES IMPORTED_LOCATION
-        ${CMAKE_SOURCE_DIR}/../jniLibs/arm64-v8a/libllama.so)
+# VERSION DEFINITIONS
+add_definitions(-DGGML_VERSION="1.0.0")
+add_definitions(-DGGML_COMMIT="manual")
 
-# 👇 IMPORT ggml
-add_library(ggml SHARED IMPORTED)
-set_target_properties(ggml PROPERTIES IMPORTED_LOCATION
-        ${CMAKE_SOURCE_DIR}/../jniLibs/arm64-v8a/libggml.so)
+# GGML sources - EXCLUDING backend-specific folders like hexagon, cuda, etc.
+file(GLOB GGML_CORE_SOURCES 
+    ${LLAMA_DIR}/ggml/src/*.c 
+    ${LLAMA_DIR}/ggml/src/*.cpp
+)
+file(GLOB_RECURSE GGML_CPU_SOURCES 
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/*.c
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/*.cpp
+)
+list(FILTER GGML_CPU_SOURCES EXCLUDE REGEX "spacemit|amx|kleidiai")
+# Note: On Android ARM, we might need specific arch files
+file(GLOB GGML_ARM_SOURCES
+    ${LLAMA_DIR}/ggml/src/arch/arm/*.c
+    ${LLAMA_DIR}/ggml/src/arch/arm/*.cpp
+)
 
-# 👇 IMPORT ggml-cpu
-add_library(ggml-cpu SHARED IMPORTED)
-set_target_properties(ggml-cpu PROPERTIES IMPORTED_LOCATION
-        ${CMAKE_SOURCE_DIR}/../jniLibs/arm64-v8a/libggml-cpu.so)
+# Llama sources (including model-specific files)
+file(GLOB LLAMA_CORE_SOURCES 
+    ${LLAMA_DIR}/src/*.cpp 
+    ${LLAMA_DIR}/src/*.c
+)
+file(GLOB LLAMA_MODELS_SOURCES
+    ${LLAMA_DIR}/src/models/*.cpp
+)
 
-# Link everything
+# Define llama library
+add_library(llama STATIC
+    ${GGML_CORE_SOURCES}
+    ${GGML_CPU_SOURCES}
+    ${GGML_ARM_SOURCES}
+    ${LLAMA_CORE_SOURCES}
+    ${LLAMA_MODELS_SOURCES}
+)
+
+# Compile options
+target_compile_features(llama PRIVATE cxx_std_17)
+target_compile_definitions(llama PRIVATE GGML_USE_CPU)
+
+# JNI library
+add_library(llm_jni SHARED
+    llm_jni.cpp
+)
+
+# Link
 target_link_libraries(
-        llm_jni
-        ${log-lib}
-        llama
-        ggml
-        ggml-cpu
+    llm_jni
+    llama
+    ${log-lib}
+    dl
 )

@@ -1,61 +1,118 @@
 package com.example.llmapp.ui.models
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.llmapp.core.models.ModelDownloader
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import java.net.URL
 
 data class AvailableModel(
     val name: String,
     val description: String,
     val size: String,
     val url: String,
-    val fileName: String
+    val fileName: String,
+    val tags: List<String> = emptyList()
 )
 
-val curatedModels = listOf(
+/** Fallback catalog used when the remote manifest cannot be reached */
+val fallbackModels = listOf(
     AvailableModel(
         "Gemma 2B (GPU INT4)",
-        "Google's official LLM optimized for fast Android GPU inference.",
+        "Google's official LLM optimized for fast Android GPU inference via Vulkan/OpenCL.",
         "1.35 GB",
         "https://huggingface.co/alexdlov/gemma-2b-it-gpu-int4.bin/resolve/main/gemma-2b-it-gpu-int4.bin",
-        "gemma-2b-it-gpu-int4.bin"
+        "gemma-2b-it-gpu-int4.bin",
+        listOf("GPU", "Recommended")
     ),
     AvailableModel(
         "Gemma 2B (CPU INT4)",
         "Fallback model for older devices without strong Vulkan support.",
         "1.34 GB",
         "https://huggingface.co/rperuman/gemma-2b-it-cpu-int4.bin/resolve/main/gemma-2b-it-cpu-int4.bin",
-        "gemma-2b-it-cpu-int4.bin"
+        "gemma-2b-it-cpu-int4.bin",
+        listOf("CPU", "Fallback")
     )
 )
+
+/** Attempts to fetch a remote JSON manifest, returns null on any failure */
+suspend fun fetchRemoteModels(): List<AvailableModel>? = withContext(Dispatchers.IO) {
+    try {
+        val json = URL("https://raw.githubusercontent.com/Ashish-Maurya-official/LLMApp/main/models.json")
+            .readText(Charsets.UTF_8)
+        val arr = JSONArray(json)
+        val result = mutableListOf<AvailableModel>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            val tagsArr = obj.optJSONArray("tags")
+            val tags = if (tagsArr != null) List(tagsArr.length()) { tagsArr.getString(it) } else emptyList()
+            result.add(
+                AvailableModel(
+                    name = obj.getString("name"),
+                    description = obj.getString("description"),
+                    size = obj.getString("size"),
+                    url = obj.getString("url"),
+                    fileName = obj.getString("fileName"),
+                    tags = tags
+                )
+            )
+        }
+        result
+    } catch (e: Exception) {
+        null
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelScreen(
-    modelDownloader: ModelDownloader, 
+    modelDownloader: ModelDownloader,
     onModelSelected: (String) -> Unit,
     openDrawer: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
-    var downloadedModels by remember { mutableStateOf(setOf<String>()) }
+    var models by remember { mutableStateOf(fallbackModels) }
+    var isLoadingCatalog by remember { mutableStateOf(true) }
+    var catalogSource by remember { mutableStateOf("") }
 
-    // Check which models are already downloaded
+    // Track per-model download progress (0..1), null = not downloading
+    val downloadProgress = remember { mutableStateMapOf<String, Float>() }
+
+    // Check which models are already on disk
+    val downloadedModels = remember(models) {
+        models.filter { modelDownloader.getDownloadedModelPath(it.fileName) != null }
+            .map { it.name }.toSet()
+    }.let { mutableStateOf(it) }.value
+
+    // Fetch remote catalog on launch
     LaunchedEffect(Unit) {
-        val downloaded = curatedModels.filter {
-            modelDownloader.getDownloadedModelPath(it.fileName) != null
-        }.map { it.name }.toSet()
-        downloadedModels = downloaded
+        isLoadingCatalog = true
+        val remote = fetchRemoteModels()
+        if (remote != null) {
+            models = remote
+            catalogSource = "Remote catalog"
+        } else {
+            catalogSource = "Offline — using local catalog"
+        }
+        isLoadingCatalog = false
     }
 
     Scaffold(
@@ -71,67 +128,171 @@ fun ModelScreen(
         }
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                Text(
-                    "Download and manage AI models locally. No internet required for inference.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
+                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    Text(
+                        "Download and run AI models completely offline.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (isLoadingCatalog) {
+                        Spacer(Modifier.height(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Fetching latest models...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else if (catalogSource.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(catalogSource, fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                    }
+                }
             }
 
-            items(curatedModels) { model ->
+            items(models, key = { it.fileName }) { model ->
                 val isDownloaded = downloadedModels.contains(model.name)
-                
+                val progress = downloadProgress[model.fileName]
+                val isDownloading = progress != null && progress < 1.0f
+                val animatedProgress by animateFloatAsState(
+                    targetValue = progress ?: 0f,
+                    label = "download_progress"
+                )
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isDownloaded) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                        containerColor = when {
+                            isDownloaded -> MaterialTheme.colorScheme.secondaryContainer
+                            isDownloading -> MaterialTheme.colorScheme.surfaceContainerHigh
+                            else -> MaterialTheme.colorScheme.surfaceVariant
+                        }
                     )
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
+                        // Header row
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = model.name,
-                                style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.weight(1f)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = model.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Size: ${model.size}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                             if (isDownloaded) {
-                                Icon(Icons.Default.CheckCircle, contentDescription = "Downloaded", tint = MaterialTheme.colorScheme.primary)
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = "Downloaded",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
                             }
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = model.description, style = MaterialTheme.typography.bodyMedium)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = "Size: ${model.size}", style = MaterialTheme.typography.labelMedium)
-                            Spacer(modifier = Modifier.weight(1f))
-                            
-                            if (isDownloaded) {
-                                Button(onClick = {
-                                    modelDownloader.getDownloadedModelPath(model.fileName)?.let { path ->
-                                        onModelSelected(path)
+
+                        // Tags
+                        if (model.tags.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                model.tags.forEach { tag ->
+                                    Surface(
+                                        shape = MaterialTheme.shapes.extraSmall,
+                                        color = MaterialTheme.colorScheme.tertiaryContainer
+                                    ) {
+                                        Text(
+                                            tag,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                                        )
                                     }
-                                }) {
-                                    Text("Load Model")
                                 }
-                            } else {
-                                OutlinedButton(onClick = {
-                                    modelDownloader.downloadModel(model.url, model.fileName)
-                                    // In a real app, observe DownloadManager state instead of blind delay
-                                }) {
-                                    Icon(Icons.Default.Download, contentDescription = "Download")
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Download")
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = model.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // Download progress bar
+                        if (isDownloading) {
+                            Column {
+                                LinearProgressIndicator(
+                                    progress = { animatedProgress },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    strokeCap = StrokeCap.Round
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "${(animatedProgress * 100).toInt()}%  downloading...",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                if (isDownloaded) {
+                                    Button(
+                                        onClick = {
+                                            modelDownloader.getDownloadedModelPath(model.fileName)
+                                                ?.let { path -> onModelSelected(path) }
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Load Model")
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                downloadProgress[model.fileName] = 0f
+                                                modelDownloader.downloadModel(model.url, model.fileName)
+                                                    .collect { p ->
+                                                        if (p < 0f) {
+                                                            // Error sentinel
+                                                            downloadProgress.remove(model.fileName)
+                                                        } else {
+                                                            downloadProgress[model.fileName] = p
+                                                            if (p >= 1.0f) {
+                                                                downloadProgress.remove(model.fileName)
+                                                                // Re-check downloaded state after a short delay
+                                                                kotlinx.coroutines.delay(500)
+                                                            }
+                                                        }
+                                                    }
+                                            }
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.CloudDownload, null, Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Download")
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+
+            item { Spacer(Modifier.height(16.dp)) }
         }
     }
 }

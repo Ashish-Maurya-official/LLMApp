@@ -179,7 +179,11 @@ class MainActivity : ComponentActivity() {
                             ChatScreen(
                                 uiState = uiState,
                                 onIntent = { intent -> viewModel.processIntent(intent) },
-                                openDrawer = { scope.launch { drawerState.open() } }
+                                openDrawer = { scope.launch { drawerState.open() } },
+                                onRegisterTokenCallback = { callback ->
+                                    viewModel.onNewToken = callback
+                                },
+                                settingsManager = settingsManager
                             )
                         }
                             composable("models") {

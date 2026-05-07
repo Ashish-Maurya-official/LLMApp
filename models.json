@@ -1,0 +1,18 @@
+[
+  {
+    "name": "Gemma 2B (GPU INT4)",
+    "description": "Google's official Gemma 2B instruction-tuned model quantized to INT4 for fast Android GPU inference via Vulkan/OpenCL.",
+    "size": "1.35 GB",
+    "url": "https://huggingface.co/alexdlov/gemma-2b-it-gpu-int4.bin/resolve/main/gemma-2b-it-gpu-int4.bin",
+    "fileName": "gemma-2b-it-gpu-int4.bin",
+    "tags": ["GPU", "Recommended"]
+  },
+  {
+    "name": "Gemma 2B (CPU INT4)",
+    "description": "Fallback model for devices without Vulkan support. Runs on CPU with lower memory requirements.",
+    "size": "1.34 GB",
+    "url": "https://huggingface.co/rperuman/gemma-2b-it-cpu-int4.bin/resolve/main/gemma-2b-it-cpu-int4.bin",
+    "fileName": "gemma-2b-it-cpu-int4.bin",
+    "tags": ["CPU", "Fallback"]
+  }
+]

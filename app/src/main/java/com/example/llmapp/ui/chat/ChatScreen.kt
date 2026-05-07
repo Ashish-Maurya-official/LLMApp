@@ -1,5 +1,10 @@
 package com.example.llmapp.ui.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
@@ -12,9 +17,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,22 +31,107 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.example.llmapp.core.voice.VoiceManager
 import com.example.llmapp.ui.state.ChatIntent
 import com.example.llmapp.ui.state.ChatUiState
+import com.example.llmapp.ui.state.VoiceState
+import com.example.llmapp.ui.voice.VoiceConversationOverlay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     uiState: ChatUiState,
     onIntent: (ChatIntent) -> Unit,
-    openDrawer: () -> Unit
+    openDrawer: () -> Unit,
+    onRegisterTokenCallback: ((token: String, done: Boolean) -> Unit) -> Unit = {},
+    settingsManager: com.example.llmapp.core.settings.SettingsManager? = null
 ) {
     var inputText by remember { mutableStateOf("") }
     val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+    var isListening by remember { mutableStateOf(false) }
+
+    val voiceManager = remember {
+        VoiceManager(
+            context = context,
+            onSpeechResult = { text ->
+                onIntent(ChatIntent.SetPartialTranscript(text))
+                onIntent(ChatIntent.SetVoiceState(VoiceState.THINKING))
+                onIntent(ChatIntent.SendMessage(text))
+            },
+            onListeningStateChanged = { listening ->
+                isListening = listening
+                if (listening) onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
+            },
+            onPartialResult = { partial ->
+                onIntent(ChatIntent.SetPartialTranscript(partial))
+            },
+            onSpeakingStateChanged = { speaking ->
+                if (speaking) onIntent(ChatIntent.SetVoiceState(VoiceState.SPEAKING))
+                else if (uiState.isVoiceModeActive) onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
+            },
+            onError = { error ->
+                Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
+            },
+            speechRate = settingsManager?.ttsSpeechRate ?: 0.95f,
+            voiceName = settingsManager?.ttsVoiceName ?: ""
+        )
+    }
+
+    val requestPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            voiceManager.isVoiceModeActive = true
+            onIntent(ChatIntent.ActivateVoiceMode)
+            voiceManager.startListening()
+        } else {
+            Toast.makeText(context, "Microphone permission required for voice mode", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        // Register real token callback with ViewModel for true streaming TTS
+        onRegisterTokenCallback { token, done ->
+            if (voiceManager.isVoiceModeActive) {
+                voiceManager.feedToken(token, done)
+            }
+        }
+        onDispose {
+            voiceManager.destroy()
+        }
+    }
+
+    // Fallback: simple one-shot speak when NOT in voice mode
+    val isGenerating = uiState.isGenerating
+    val messages = uiState.messages
+    var prevGenerating by remember { mutableStateOf(false) }
+    LaunchedEffect(isGenerating) {
+        if (prevGenerating && !isGenerating && !uiState.isVoiceModeActive) {
+            val last = messages.lastOrNull()
+            if (last != null && !last.isUser && last.text.isNotBlank()) {
+                voiceManager.speak(last.text)
+            }
+        }
+        prevGenerating = isGenerating
+    }
+
+    fun startVoiceMode() {
+        voiceManager.resetForNewGeneration()
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            voiceManager.isVoiceModeActive = true
+            onIntent(ChatIntent.ActivateVoiceMode)
+            voiceManager.startListening()
+        } else {
+            requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -46,6 +140,24 @@ fun ChatScreen(
                 navigationIcon = {
                     IconButton(onClick = openDrawer) {
                         Icon(Icons.Default.Menu, contentDescription = "Menu")
+                    }
+                },
+                actions = {
+                    // New Chat button
+                    IconButton(onClick = { onIntent(ChatIntent.ClearHistory) }) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "New Chat",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    // Live Voice Mode button
+                    IconButton(onClick = { startVoiceMode() }) {
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = "Live Voice Mode",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             )
@@ -72,6 +184,48 @@ fun ChatScreen(
             contentPadding = PaddingValues(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Empty state
+            if (uiState.messages.isEmpty() && !uiState.isGenerating) {
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillParentMaxSize()
+                            .padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(80.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.SmartToy,
+                                contentDescription = null,
+                                modifier = Modifier.padding(20.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(Modifier.height(24.dp))
+                        Text(
+                            "Ready to chat",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            if (uiState.status == "Ready")
+                                "Type a message or tap the mic to start a conversation."
+                            else
+                                "Open the drawer → Models to download and load a model first.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            }
+
             items(uiState.messages) { msg ->
                 if (msg.isUser) {
                     UserMessageBubble(text = msg.text)
@@ -163,25 +317,75 @@ fun ChatScreen(
                         MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                IconButton(
-                    onClick = {
-                        if (inputText.isNotBlank() && !uiState.isGenerating) {
+                if (isListening) {
+                    IconButton(
+                        onClick = { voiceManager.stopListening() },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(MaterialTheme.colorScheme.error, CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Stop Listening",
+                            tint = MaterialTheme.colorScheme.onError
+                        )
+                    }
+                } else if (inputText.isNotBlank() && !uiState.isGenerating) {
+                    IconButton(
+                        onClick = {
                             onIntent(ChatIntent.SendMessage(inputText))
                             inputText = ""
-                        }
-                    },
-                    enabled = inputText.isNotBlank() && !uiState.isGenerating,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .background(sendBtnColor, CircleShape)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
-                        tint = sendIconColor
-                    )
+                        },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(sendBtnColor, CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Send",
+                            tint = sendIconColor
+                        )
+                    }
+                } else {
+                    // Tap mic icon in input field → simple one-shot voice input (not live mode)
+                    IconButton(
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                voiceManager.startListening()
+                            } else {
+                                requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Voice Input",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
+        }
+
+        // Voice Mode Full-Screen Overlay
+        if (uiState.isVoiceModeActive) {
+            VoiceConversationOverlay(
+                voiceState = uiState.voiceState,
+                partialTranscript = uiState.partialTranscript,
+                onInterrupt = {
+                    voiceManager.interrupt()
+                    onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
+                },
+                onDismiss = {
+                    voiceManager.interrupt()
+                    voiceManager.isVoiceModeActive = false
+                    voiceManager.stopListening()
+                    onIntent(ChatIntent.DeactivateVoiceMode)
+                }
+            )
         }
 
         // Loading Overlay
@@ -263,56 +467,72 @@ fun AssistantMessageBubble(text: String, onCopy: () -> Unit) {
 }
 
 sealed class MessagePart {
-    data class Text(val content: String) : MessagePart()
+    data class PlainMarkdown(val content: String) : MessagePart()
     data class Code(val language: String, val content: String) : MessagePart()
 }
 
-fun parseMarkdown(text: String): List<MessagePart> {
+fun parseMarkdownParts(text: String): List<MessagePart> {
     val parts = mutableListOf<MessagePart>()
-    val codeBlockRegex = Regex("```(\\w*)\\n([\\s\\S]*?)```")
-    
+    val codeBlockRegex = Regex("```(\\w*)[\\r\\n]+([\\s\\S]*?)```")
     var lastIndex = 0
     codeBlockRegex.findAll(text).forEach { match ->
         val textBefore = text.substring(lastIndex, match.range.first)
-        if (textBefore.isNotEmpty()) {
-            parts.add(MessagePart.Text(textBefore))
-        }
-        
-        val language = match.groupValues[1]
-        val codeContent = match.groupValues[2]
-        parts.add(MessagePart.Code(language, codeContent))
-        
+        if (textBefore.isNotBlank()) parts.add(MessagePart.PlainMarkdown(textBefore))
+        parts.add(MessagePart.Code(match.groupValues[1], match.groupValues[2]))
         lastIndex = match.range.last + 1
     }
-    
     if (lastIndex < text.length) {
-        parts.add(MessagePart.Text(text.substring(lastIndex)))
+        val remaining = text.substring(lastIndex)
+        if (remaining.isNotBlank()) parts.add(MessagePart.PlainMarkdown(remaining))
     }
-    
-    return parts.ifEmpty { listOf(MessagePart.Text(text)) }
+    return parts.ifEmpty { listOf(MessagePart.PlainMarkdown(text)) }
+}
+
+@Composable
+fun MarkwonText(markdown: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val markwon = remember(context) {
+        io.noties.markwon.Markwon.builder(context)
+            .usePlugin(io.noties.markwon.ext.strikethrough.StrikethroughPlugin.create())
+            .usePlugin(io.noties.markwon.ext.tables.TablePlugin.create(context))
+            .build()
+    }
+    val surfaceColor = MaterialTheme.colorScheme.onSurface
+    val bodyLargeSize = MaterialTheme.typography.bodyLarge.fontSize.value
+
+    androidx.compose.ui.viewinterop.AndroidView(
+        factory = { ctx ->
+            android.widget.TextView(ctx).apply {
+                setTextColor(surfaceColor.hashCode())
+                textSize = bodyLargeSize
+                setLineSpacing(4f, 1.1f)
+            }
+        },
+        update = { view ->
+            markwon.setMarkdown(view, markdown)
+        },
+        modifier = modifier
+    )
 }
 
 @Composable
 fun ParsedMarkdownMessage(text: String) {
-    val parts = parseMarkdown(text)
+    val parts = parseMarkdownParts(text)
     val clipboardManager = LocalClipboardManager.current
-    
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         parts.forEach { part ->
             when (part) {
-                is MessagePart.Text -> {
-                    // For a full implementation, you could use a dedicated Markdown library here
-                    // to parse bold/italics. For now, we display standard text.
-                    Text(
-                        text = part.content.trim(),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface
+                is MessagePart.PlainMarkdown -> {
+                    MarkwonText(
+                        markdown = part.content.trim(),
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
                 is MessagePart.Code -> {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF1E1E1E), // Dark code background
+                        color = Color(0xFF1E1E1E),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column {
@@ -334,8 +554,8 @@ fun ParsedMarkdownMessage(text: String) {
                                     modifier = Modifier.size(24.dp)
                                 ) {
                                     Icon(
-                                        Icons.Default.ContentCopy, 
-                                        contentDescription = "Copy Code", 
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = "Copy Code",
                                         tint = Color.LightGray,
                                         modifier = Modifier.size(14.dp)
                                     )

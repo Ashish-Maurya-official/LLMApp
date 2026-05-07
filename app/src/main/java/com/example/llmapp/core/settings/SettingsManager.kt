@@ -25,4 +25,12 @@ class SettingsManager(context: Context) {
     var themePreference: String
         get() = prefs.getString("theme_preference", "System") ?: "System"
         set(value) = prefs.edit().putString("theme_preference", value).apply()
+
+    var ttsVoiceName: String
+        get() = prefs.getString("tts_voice_name", "") ?: ""
+        set(value) = prefs.edit().putString("tts_voice_name", value).apply()
+
+    var ttsSpeechRate: Float
+        get() = prefs.getFloat("tts_speech_rate", 0.95f)
+        set(value) = prefs.edit().putFloat("tts_speech_rate", value).apply()
 }

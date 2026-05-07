@@ -7,6 +7,7 @@ import com.example.llmapp.core.inference.LlmInferenceManager
 import com.example.llmapp.core.settings.SettingsManager
 import com.example.llmapp.ui.state.ChatIntent
 import com.example.llmapp.ui.state.ChatUiState
+import com.example.llmapp.ui.state.VoiceState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,12 +33,21 @@ class ChatViewModel : ViewModel() {
     // Store current sessionId
     private var currentSessionId: String = System.currentTimeMillis().toString()
 
+    /**
+     * Set this from the UI layer (ChatScreen) to receive raw tokens as they are
+     * emitted by the LLM — used by VoiceManager for real-time sentence-chunked TTS.
+     */
+    var onNewToken: ((token: String, done: Boolean) -> Unit)? = null
+
     var llmInferenceManager: LlmInferenceManager? = null
         set(value) {
             field = value
             value?.let { manager ->
                 viewModelScope.launch {
                     manager.outputFlow.collect { (token, done) ->
+                        // Forward raw token to VoiceManager for streaming TTS
+                        onNewToken?.invoke(token, done)
+
                         _uiState.update { state ->
                             val currentMessages = state.messages.toMutableList()
                             val lastIndex = currentMessages.size - 1
@@ -45,12 +55,11 @@ class ChatViewModel : ViewModel() {
                                 val updatedText = currentMessages[lastIndex].text + token
                                 currentMessages[lastIndex] = currentMessages[lastIndex].copy(text = updatedText)
                             }
-                            
+
                             if (done) {
-                                // Save session when model finishes responding
                                 historyManager?.saveSession(currentSessionId, currentMessages)
                             }
-                            
+
                             state.copy(
                                 messages = currentMessages,
                                 isGenerating = !done
@@ -81,6 +90,18 @@ class ChatViewModel : ViewModel() {
                 val messages = historyManager?.loadSession(intent.sessionId) ?: emptyList()
                 currentSessionId = intent.sessionId
                 _uiState.update { it.copy(messages = messages, errorMessage = null) }
+            }
+            is ChatIntent.ActivateVoiceMode -> {
+                _uiState.update { it.copy(isVoiceModeActive = true, voiceState = VoiceState.LISTENING) }
+            }
+            is ChatIntent.DeactivateVoiceMode -> {
+                _uiState.update { it.copy(isVoiceModeActive = false, voiceState = VoiceState.IDLE, partialTranscript = "") }
+            }
+            is ChatIntent.SetVoiceState -> {
+                _uiState.update { it.copy(voiceState = intent.state) }
+            }
+            is ChatIntent.SetPartialTranscript -> {
+                _uiState.update { it.copy(partialTranscript = intent.text) }
             }
         }
     }

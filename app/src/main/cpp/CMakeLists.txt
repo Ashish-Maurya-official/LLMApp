@@ -27,10 +27,10 @@ file(GLOB_RECURSE GGML_CPU_SOURCES
     ${LLAMA_DIR}/ggml/src/ggml-cpu/*.cpp
 )
 list(FILTER GGML_CPU_SOURCES EXCLUDE REGEX "spacemit|amx|kleidiai")
-# Note: On Android ARM, we might need specific arch files
-file(GLOB GGML_ARM_SOURCES
-    ${LLAMA_DIR}/ggml/src/arch/arm/*.c
-    ${LLAMA_DIR}/ggml/src/arch/arm/*.cpp
+
+file(GLOB GGML_CPU_ARM_SOURCES
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/arch/arm/*.c
+    ${LLAMA_DIR}/ggml/src/ggml-cpu/arch/arm/*.cpp
 )
 
 # Llama sources (including model-specific files)
@@ -46,7 +46,7 @@ file(GLOB LLAMA_MODELS_SOURCES
 add_library(llama STATIC
     ${GGML_CORE_SOURCES}
     ${GGML_CPU_SOURCES}
-    ${GGML_ARM_SOURCES}
+    ${GGML_CPU_ARM_SOURCES}
     ${LLAMA_CORE_SOURCES}
     ${LLAMA_MODELS_SOURCES}
 )

@@ -1,6 +1,5 @@
 package com.example.llmapp.ui.theme
 
-import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -9,43 +8,58 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 private val DarkColorScheme = darkColorScheme(
-    primary = AiGreen,
-    secondary = PurpleGrey80,
-    tertiary = Pink80,
-    background = DarkBg,
-    surface = DarkSurface,
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = UserText,
-    onSurface = UserText,
-    surfaceVariant = DarkAiMsg,
-    onSurfaceVariant = UserText
+    primary = ChatGPTGreen,
+    secondary = PurpleAccent,
+    tertiary = LegacyGreen,
+    background = DarkBackground,
+    surface = DarkBackground,
+    surfaceVariant = DarkCardPanel,
+    surfaceContainer = DarkInputBox, // We use this for input boxes
+    primaryContainer = DarkHoverGray, // User bubble background
+    onPrimaryContainer = DarkTextPrimary,
+    secondaryContainer = DarkBackground, // Assistant bubble background
+    onSecondaryContainer = DarkTextPrimary,
+    onPrimary = DarkTextPrimary,
+    onSecondary = DarkTextPrimary,
+    onBackground = DarkTextPrimary,
+    onSurface = DarkTextPrimary,
+    onSurfaceVariant = DarkTextPrimary,
+    outline = DarkBorderGray,
+    error = ErrorRed,
+    errorContainer = ErrorRed.copy(alpha = 0.2f),
+    onErrorContainer = ErrorRed
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = AiGreen,
-    secondary = PurpleGrey40,
-    tertiary = Pink40,
-    background = Color.White,
-    surface = Color(0xFFF7F7F8),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF202123),
-    onSurface = Color(0xFF202123),
-    surfaceVariant = Color(0xFFF7F7F8),
-    onSurfaceVariant = Color(0xFF202123)
+    primary = ChatGPTGreen,
+    secondary = PurpleAccent,
+    tertiary = LegacyGreen,
+    background = LightBackground,
+    surface = LightBackground,
+    surfaceVariant = LightCardPanel,
+    surfaceContainer = LightInputBox,
+    primaryContainer = LightSecondaryBg, // User bubble background
+    onPrimaryContainer = LightTextPrimary,
+    secondaryContainer = LightBackground, // Assistant bubble background
+    onSecondaryContainer = LightTextPrimary,
+    onPrimary = LightBackground,
+    onSecondary = LightBackground,
+    onBackground = LightTextPrimary,
+    onSurface = LightTextPrimary,
+    onSurfaceVariant = LightTextPrimary,
+    outline = LightBorderGray,
+    error = ErrorRed,
+    errorContainer = ErrorRed.copy(alpha = 0.1f),
+    onErrorContainer = ErrorRed
 )
 
 @Composable
 fun LLMAppTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false, // Turned off for ChatGPT aesthetic
+    dynamicColor: Boolean = false, // Turned off to strictly match ChatGPT
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

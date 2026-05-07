@@ -5,32 +5,46 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.llmapp.core.inference.LlmInferenceManager
 import com.example.llmapp.core.models.ModelDownloader
+import com.example.llmapp.core.settings.SettingsManager
+import com.example.llmapp.core.history.ChatHistoryManager
+import com.example.llmapp.ui.theme.LLMAppTheme
 import com.example.llmapp.ui.chat.ChatScreen
 import com.example.llmapp.ui.models.ModelScreen
+import com.example.llmapp.ui.settings.SettingsScreen
+import com.example.llmapp.ui.history.HistoryScreen
 import com.example.llmapp.ui.state.ChatIntent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+@OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
     private val viewModel: ChatViewModel by viewModels()
     private lateinit var llmInferenceManager: LlmInferenceManager
     private lateinit var modelDownloader: ModelDownloader
+    private lateinit var settingsManager: SettingsManager
+    private lateinit var historyManager: ChatHistoryManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,76 +52,192 @@ class MainActivity : ComponentActivity() {
 
         llmInferenceManager = LlmInferenceManager(this)
         modelDownloader = ModelDownloader(this)
+        settingsManager = SettingsManager(this)
+        historyManager = ChatHistoryManager(this)
+        
         viewModel.llmInferenceManager = llmInferenceManager
+        viewModel.settingsManager = settingsManager
+        viewModel.historyManager = historyManager
 
         setContent {
-            MaterialTheme {
+            val themePref by viewModel.themePreference.collectAsState()
+            val isDark = when (themePref) {
+                "Dark" -> true
+                "Light" -> false
+                else -> isSystemInDarkTheme()
+            }
+
+            LLMAppTheme(darkTheme = isDark) {
                 val navController = rememberNavController()
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
 
-                Scaffold(
-                    bottomBar = {
-                        NavigationBar {
-                            NavigationBarItem(
-                                icon = { Icon(Icons.Default.Chat, contentDescription = "Chat") },
-                                label = { Text("Chat") },
-                                selected = currentRoute == "chat",
-                                onClick = {
-                                    navController.navigate("chat") {
-                                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                }
+                val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+                val scope = rememberCoroutineScope()
+                
+                // Get sessions for drawer
+                // Usually we'd want this reactive, but for now we just fetch when composing drawer
+                var sessions by remember { mutableStateOf(historyManager.getSessionIds().toList().sortedDescending()) }
+                
+                // Refresh sessions whenever the drawer opens
+                LaunchedEffect(drawerState.isOpen) {
+                    if (drawerState.isOpen) {
+                        sessions = historyManager.getSessionIds().toList().sortedDescending()
+                    }
+                }
+
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    drawerContent = {
+                        ModalDrawerSheet {
+                            Text(
+                                "Recent Chats", 
+                                modifier = Modifier.padding(16.dp), 
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
                             )
-                            NavigationBarItem(
+                            
+                            val recentSessions = sessions.take(5)
+                            recentSessions.forEach { sessionId ->
+                                NavigationDrawerItem(
+                                    icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
+                                    label = { 
+                                        Text(
+                                            "Chat ${sessionId.takeLast(6)}", 
+                                            maxLines = 1 
+                                        ) 
+                                    },
+                                    selected = false,
+                                    onClick = {
+                                        scope.launch { drawerState.close() }
+                                        viewModel.processIntent(ChatIntent.RestoreSession(sessionId))
+                                        navController.navigate("chat") {
+                                            popUpTo("chat") { inclusive = true }
+                                        }
+                                    },
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                                )
+                            }
+                            
+                            if (sessions.size > 5) {
+                                NavigationDrawerItem(
+                                    icon = { Icon(Icons.Default.History, contentDescription = "View all") },
+                                    label = { Text("View all history") },
+                                    selected = currentRoute == "history",
+                                    onClick = {
+                                        scope.launch { drawerState.close() }
+                                        navController.navigate("history") {
+                                            popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
+                                    },
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                                )
+                            }
+                            
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            
+                            NavigationDrawerItem(
                                 icon = { Icon(Icons.Default.Storage, contentDescription = "Models") },
                                 label = { Text("Models") },
                                 selected = currentRoute == "models",
                                 onClick = {
+                                    scope.launch { drawerState.close() }
                                     navController.navigate("models") {
                                         popUpTo(navController.graph.startDestinationId) { saveState = true }
                                         launchSingleTop = true
                                         restoreState = true
                                     }
-                                }
+                                },
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                            )
+                            
+                            NavigationDrawerItem(
+                                icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                                label = { Text("Settings") },
+                                selected = currentRoute == "settings",
+                                onClick = {
+                                    scope.launch { drawerState.close() }
+                                    navController.navigate("settings") {
+                                        popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                             )
                         }
                     }
-                ) { innerPadding ->
+                ) {
                     NavHost(
                         navController = navController,
-                        startDestination = "models",
-                        modifier = Modifier.padding(innerPadding)
+                        startDestination = "models"
                     ) {
                         composable("chat") {
                             val uiState by viewModel.uiState.collectAsState()
                             ChatScreen(
                                 uiState = uiState,
-                                onIntent = { intent -> viewModel.processIntent(intent) }
+                                onIntent = { intent -> viewModel.processIntent(intent) },
+                                openDrawer = { scope.launch { drawerState.open() } }
                             )
                         }
-                        composable("models") {
-                            ModelScreen(
-                                modelDownloader = modelDownloader,
-                                onModelSelected = { path ->
-                                    initModel(path)
-                                    navController.navigate("chat")
-                                }
-                            )
+                            composable("models") {
+                                ModelScreen(
+                                    modelDownloader = modelDownloader,
+                                    onModelSelected = { path ->
+                                        initModel(path)
+                                        navController.navigate("chat") {
+                                            popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
+                                    },
+                                    openDrawer = { scope.launch { drawerState.open() } }
+                                )
+                            }
+                            composable("history") {
+                                HistoryScreen(
+                                    historyManager = historyManager,
+                                    onSessionSelected = { sessionId ->
+                                        viewModel.processIntent(ChatIntent.RestoreSession(sessionId))
+                                        navController.navigate("chat") {
+                                            popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
+                                    },
+                                    openDrawer = { scope.launch { drawerState.open() } }
+                                )
+                            }
+                            composable("settings") {
+                                val currentTheme by viewModel.themePreference.collectAsState()
+                                SettingsScreen(
+                                    settingsManager = settingsManager,
+                                    currentTheme = currentTheme,
+                                    onThemeChanged = { newTheme -> viewModel.updateTheme(newTheme) },
+                                    openDrawer = { scope.launch { drawerState.open() } }
+                                )
+                            }
                         }
                     }
                 }
-            }
         }
     }
-
     private fun initModel(path: String) {
         viewModel.processIntent(ChatIntent.LoadModel(path))
         MainScope().launch(Dispatchers.IO) {
             try {
-                llmInferenceManager.loadModel(modelPath = path)
+                // Read configuration directly from SettingsManager
+                llmInferenceManager.loadModel(
+                    modelPath = path,
+                    maxTokens = settingsManager.maxTokens,
+                    temperature = settingsManager.temperature,
+                    topK = settingsManager.topK
+                )
+                withContext(Dispatchers.Main) {
+                    viewModel.processIntent(ChatIntent.ModelLoaded)
+                }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     viewModel.processIntent(ChatIntent.SetError("Failed to load model: ${e.message}"))

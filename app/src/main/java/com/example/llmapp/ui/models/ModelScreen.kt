@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,7 +42,11 @@ val curatedModels = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ModelScreen(modelDownloader: ModelDownloader, onModelSelected: (String) -> Unit) {
+fun ModelScreen(
+    modelDownloader: ModelDownloader, 
+    onModelSelected: (String) -> Unit,
+    openDrawer: () -> Unit
+) {
     val coroutineScope = rememberCoroutineScope()
     var downloadedModels by remember { mutableStateOf(setOf<String>()) }
 
@@ -55,7 +60,14 @@ fun ModelScreen(modelDownloader: ModelDownloader, onModelSelected: (String) -> U
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Model Gallery") })
+            TopAppBar(
+                title = { Text("Model Gallery") },
+                navigationIcon = {
+                    IconButton(onClick = openDrawer) {
+                        Icon(Icons.Default.Menu, contentDescription = "Menu")
+                    }
+                }
+            )
         }
     ) { padding ->
         LazyColumn(

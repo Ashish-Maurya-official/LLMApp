@@ -16,13 +16,14 @@ data class ChatUiState(
     val errorMessage: String? = null,
     val isVoiceModeActive: Boolean = false,
     val voiceState: VoiceState = VoiceState.IDLE,
-    val partialTranscript: String = ""
+    val partialTranscript: String = "",
+    val activeBackend: String? = null
 )
 
 sealed class ChatIntent {
     data class SendMessage(val text: String) : ChatIntent()
     data class LoadModel(val path: String) : ChatIntent()
-    object ModelLoaded : ChatIntent()
+    data class ModelLoaded(val backend: String) : ChatIntent()
     data class SetError(val message: String) : ChatIntent()
     data class RestoreSession(val sessionId: String) : ChatIntent()
     object ClearHistory : ChatIntent()

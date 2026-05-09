@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
@@ -153,6 +155,58 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    // Backend Selection Dropdown
+                    var backendExpanded by remember { mutableStateOf(false) }
+                    val currentBackend = uiState.activeBackend ?: settingsManager?.hardwareBackend ?: "Auto"
+                    
+                    Box {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .clickable { backendExpanded = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = currentBackend,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Backend",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+                        
+                        DropdownMenu(
+                            expanded = backendExpanded,
+                            onDismissRequest = { backendExpanded = false }
+                        ) {
+                            listOf("Auto", "GPU", "CPU").forEach { backend ->
+                                DropdownMenuItem(
+                                    text = { Text(backend) },
+                                    onClick = {
+                                        settingsManager?.hardwareBackend = backend
+                                        backendExpanded = false
+                                        // Trigger a reload of the model with the new backend
+                                        val currentModel = settingsManager?.currentModelPath
+                                        if (!currentModel.isNullOrEmpty()) {
+                                            onIntent(ChatIntent.LoadModel(currentModel))
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+
                     // New Chat button
                     IconButton(onClick = { onIntent(ChatIntent.ClearHistory) }) {
                         Icon(

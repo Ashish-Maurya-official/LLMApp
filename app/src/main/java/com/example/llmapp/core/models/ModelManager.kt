@@ -19,28 +19,21 @@ class ModelManager(private val context: Context) {
     val availableModels = listOf(
         LlmModelInfo(
             name = "Gemma 4 E2B (IT)",
-            description = "The absolute latest generation from Google (April 2026). Ultra-smart and optimized for mobile.",
-            url = "https://huggingface.co/google/gemma-4-e2b-it-gpu-int4/resolve/main/gemma-4-e2b-it-gpu-int4.bin",
-            fileName = "gemma-4-e2b-it.bin",
+            description = "The absolute latest generation (April 2026). Optimized for LiteRT-LM with top reasoning.",
+            url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+            fileName = "gemma-4-e2b.litertlm",
             size = "1.8 GB"
         ),
         LlmModelInfo(
             name = "Gemma 2 2B (IT)",
-            description = "Latest high-performance small model from Google.",
-            url = "https://huggingface.co/google/gemma-2-2b-it-gpu-int4/resolve/main/gemma-2-2b-it-gpu-int4.bin",
-            fileName = "gemma-2-2b-it.bin",
-            size = "1.6 GB"
-        ),
-        LlmModelInfo(
-            name = "Gemma 1.1 2B (IT)",
-            description = "Optimized for speed and efficiency.",
-            url = "https://huggingface.co/google/gemma-1.1-2b-it-gpu-int4/resolve/main/gemma-1.1-2b-it-gpu-int4.bin",
-            fileName = "gemma-1.1-2b-it.bin",
+            description = "High-performance model optimized for mobile. Fast and smart.",
+            url = "https://huggingface.co/litert-community/gemma-2-2b-it-litert-lm/resolve/main/gemma-2-2b-it.litertlm",
+            fileName = "gemma-2-2b.litertlm",
             size = "1.4 GB"
         ),
         LlmModelInfo(
             name = "Falcon 1B",
-            description = "Ultra-lightweight model for low-end devices.",
+            description = "Ultra-lightweight model for low-memory devices.",
             url = "https://huggingface.co/tiiuae/falcon-1b-it-gpu-int4/resolve/main/falcon-1b-it-gpu-int4.bin",
             fileName = "falcon-1b-it.bin",
             size = "0.9 GB"

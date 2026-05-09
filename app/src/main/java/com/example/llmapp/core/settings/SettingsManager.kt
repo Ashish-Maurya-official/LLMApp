@@ -61,4 +61,8 @@ class SettingsManager(context: Context) {
     var currentModelPath: String
         get() = prefs.getString("current_model_path", "") ?: ""
         set(value) = prefs.edit().putString("current_model_path", value).apply()
+
+    var hardwareBackend: String
+        get() = prefs.getString("hardware_backend", "Auto") ?: "Auto"
+        set(value) = prefs.edit().putString("hardware_backend", value).apply()
 }

@@ -145,7 +145,8 @@ class ChatViewModel : ViewModel() {
                                     "I cannot access",
                                     "I don't have access",
                                     "as an AI",
-                                    "I am an AI"
+                                    "I am an AI",
+                                    "SEARCH_NEEDED"
                             )
                     val isRefusal = refusalPhrases.any { newRaw.contains(it, ignoreCase = true) }
 
@@ -284,14 +285,14 @@ class ChatViewModel : ViewModel() {
             is ChatIntent.LoadModel -> {
                 _uiState.update {
                     it.copy(
-                            status = "Loading model via MediaPipe GPU...",
+                            status = "Loading model via LiteRT...",
                             isLoadingModel = true,
                             errorMessage = null
                     )
                 }
             }
             is ChatIntent.ModelLoaded -> {
-                _uiState.update { it.copy(status = "Ready", isLoadingModel = false) }
+                _uiState.update { it.copy(status = "Ready", isLoadingModel = false, activeBackend = intent.backend) }
             }
             is ChatIntent.SetError -> {
                 agentPhase = AgentPhase.IDLE
@@ -447,55 +448,87 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun buildSystemPrompt(): String {
-        val manager = settingsManager ?: return "Helpful AI assistant."
-        val sb = StringBuilder("You are a helpful, empathetic AI assistant. ")
-        
-        // Dynamic User Persona (Merged for token efficiency)
+        val manager = settingsManager ?: return "You are a helpful AI assistant."
+        val userSystemPrompt = manager.systemPrompt
+        val profile = StringBuilder()
+
+        profile.append("You are a helpful AI assistant.")
+        if (userSystemPrompt.isNotBlank()) {
+            profile.append("\n$userSystemPrompt")
+        }
+
         val name = manager.userName
         val dob = manager.userDob
         val loc = manager.userLocation
         val bio = manager.userBio
-        
+
         if (name.isNotBlank() || dob.isNotBlank() || loc.isNotBlank() || bio.isNotBlank()) {
-            sb.append("\nUser: ${if(name.isNotBlank()) name else "User"}")
-            val details = mutableListOf<String>()
-            if (dob.isNotBlank()) details.add("born $dob")
-            if (loc.isNotBlank()) details.add("in $loc")
-            if (details.isNotEmpty()) sb.append(" (${details.joinToString(", ")})")
-            if (bio.isNotBlank()) sb.append(". Interests: $bio")
-            sb.append(". Provide personalized, human-like responses.")
+            profile.append("\n\nUSER INFORMATION:")
+            if (name.isNotBlank()) profile.append("\n- Name: $name")
+            if (dob.isNotBlank()) profile.append("\n- Date of Birth: $dob")
+            if (loc.isNotBlank()) profile.append("\n- Location: $loc")
+            if (bio.isNotBlank()) profile.append("\n- Interests/Bio: $bio")
+            profile.append(
+                    "\n\nUse this information to provide personalized and relevant responses to the user."
+            )
         }
 
-        if (manager.systemPrompt.isNotBlank()) sb.append("\nNotes: ${manager.systemPrompt}")
-        
-        val time = SimpleDateFormat("MMMM yyyy, EEE d, HH:mm", Locale.getDefault()).format(Date())
-        sb.append("\nTime: $time")
+        val currentDateTime =
+                SimpleDateFormat("EEEE, MMMM d, yyyy 'at' h:mm a", Locale.getDefault())
+                        .format(Date())
+        profile.append("\n\nCURRENT CONTEXT:")
+        profile.append("\n- Date and Time: $currentDateTime")
 
-        // Compressed Style Guide
-        sb.append("\nStyle: Professional Markdown (headers/bold/tables). Human-like tone. No AI clichés.")
-        
-        return sb.toString()
+        profile.append("\n\nFORMATTING INSTRUCTIONS:")
+        profile.append("\n- Use professional Markdown for all responses.")
+        profile.append("\n- Use **bold text** for emphasis or key terms.")
+        profile.append(
+                "\n- Use bullet points or numbered lists for multi-step information or lists."
+        )
+        profile.append("\n- Use ### Headers or ## Sections to organize complex or long responses.")
+        profile.append(
+                "\n- Use Markdown Tables if you need to present comparative data or structured lists."
+        )
+        profile.append("\n- Use `inline code` for technical terms or variables.")
+        profile.append(
+                "\n- Keep responses concise but visually well-structured for a mobile screen."
+        )
+
+        return profile.toString()
     }
 
     private fun buildPromptFromHistory(
             messages: List<ChatMessage>,
             pendingUserText: String = ""
     ): String {
+        val systemPrompt = buildSystemPrompt()
         val sb = StringBuilder()
 
         sb.append("<start_of_turn>user\n")
-        sb.append(buildSystemPrompt())
-        sb.append("\n\nRULE: If current knowledge is insufficient (weather/news/scores/real-time), output ONLY: $SEARCH_SENTINEL. No disclaimers.")
+        sb.append(systemPrompt)
+        sb.append("\n\nIMPORTANT RULE:\n")
+        sb.append(
+                "If you cannot answer a question from your own knowledge (e.g. current weather, today's news, live scores, real-time prices, recent events), you MUST output ONLY this exact token and nothing else:\n"
+        )
+        sb.append("$SEARCH_SENTINEL\n\n")
+        sb.append("Do NOT say \"I don't have access\" or \"I cannot search the internet\".\n")
+        sb.append("Do NOT try to answer if you don't know.\n")
+        sb.append("Just output $SEARCH_SENTINEL and stop.\n\n")
+        sb.append("If you CAN answer from your knowledge, answer normally and helpfully.\n")
         sb.append("<end_of_turn>\n")
-        sb.append("<start_of_turn>model\nUnderstood. I will use $SEARCH_SENTINEL when needed and respond naturally.<end_of_turn>\n")
+        sb.append("<start_of_turn>model\n")
+        sb.append(
+                "Understood. If I don't have the information, I will output $SEARCH_SENTINEL and stop."
+        )
+        sb.append("<end_of_turn>\n")
 
-        // Conditional Few-shots: Only show if history is short to save tokens
-        if (messages.size < 4) {
-            sb.append("<start_of_turn>user\nWhat is the weather in Delhi?<end_of_turn>\n")
-            sb.append("<start_of_turn>model\n$SEARCH_SENTINEL<end_of_turn>\n")
-            sb.append("<start_of_turn>user\nCapital of France?<end_of_turn>\n")
-            sb.append("<start_of_turn>model\nParis.<end_of_turn>\n")
-        }
+        // Few-shots
+        sb.append("<start_of_turn>user\nWhat is the weather in Delhi right now?<end_of_turn>\n")
+        sb.append("<start_of_turn>model\n$SEARCH_SENTINEL<end_of_turn>\n")
+        sb.append("<start_of_turn>user\nWhat is the capital of France?<end_of_turn>\n")
+        sb.append("<start_of_turn>model\nThe capital of France is Paris.<end_of_turn>\n")
+        sb.append("<start_of_turn>user\nWhat are the latest cricket scores?<end_of_turn>\n")
+        sb.append("<start_of_turn>model\n$SEARCH_SENTINEL<end_of_turn>\n")
 
         val limit = settingsManager?.contextLimit ?: 10
         val historyToInclude = messages.dropLast(1).takeLast(limit)

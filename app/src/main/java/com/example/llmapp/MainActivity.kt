@@ -247,14 +247,15 @@ class MainActivity : ComponentActivity() {
         MainScope().launch(Dispatchers.IO) {
             try {
                 // Read configuration directly from SettingsManager
-                llmInferenceManager.loadModel(
+                val loadedBackend = llmInferenceManager.loadModel(
                     modelPath = path,
+                    hardwareBackend = settingsManager.hardwareBackend,
                     maxTokens = settingsManager.maxTokens,
                     temperature = settingsManager.temperature,
                     topK = settingsManager.topK
                 )
                 withContext(Dispatchers.Main) {
-                    viewModel.processIntent(ChatIntent.ModelLoaded)
+                    viewModel.processIntent(ChatIntent.ModelLoaded(loadedBackend))
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {

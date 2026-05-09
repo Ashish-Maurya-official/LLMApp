@@ -102,6 +102,40 @@ fun SettingsScreen(
             )
 
             Spacer(Modifier.height(20.dp))
+            
+            // ─── Hardware Backend ──────────────────────────────────────
+            var hardwareBackend by remember { mutableStateOf(settingsManager.hardwareBackend) }
+            SectionHeader("Hardware Backend")
+            var expandedBackend by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = expandedBackend,
+                onExpandedChange = { expandedBackend = !expandedBackend }
+            ) {
+                OutlinedTextField(
+                    value = hardwareBackend,
+                    onValueChange = {},
+                    readOnly = true,
+                    modifier = Modifier.menuAnchor(),
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedBackend) }
+                )
+                ExposedDropdownMenu(
+                    expanded = expandedBackend,
+                    onDismissRequest = { expandedBackend = false }
+                ) {
+                    listOf("Auto", "GPU", "CPU").forEach { backend ->
+                        DropdownMenuItem(
+                            text = { Text(backend) },
+                            onClick = {
+                                hardwareBackend = backend
+                                settingsManager.hardwareBackend = backend
+                                expandedBackend = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
 
             // ─── Inference Parameters ────────────────────────────────────
             SectionHeader("Inference Parameters")

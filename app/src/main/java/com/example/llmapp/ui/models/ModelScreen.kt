@@ -36,32 +36,24 @@ data class AvailableModel(
 /** Fallback catalog used when the remote manifest cannot be reached */
 val fallbackModels = listOf(
     AvailableModel(
-        "Gemma 4 E2B (GPU)",
-        "Latest April 2026 model generation. Top-tier reasoning. (Requires high-end GPU)",
+        "Gemma 4 E2B (IT)",
+        "The absolute latest generation (April 2026). Optimized for LiteRT-LM with top reasoning.",
         "1.8 GB",
-        "https://huggingface.co/google/gemma-4-e2b-it-gpu-int4/resolve/main/gemma-4-e2b-it-gpu-int4.bin",
-        "gemma-4-e2b-it.bin",
-        listOf("GPU", "NEW", "2026")
+        "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+        "gemma-4-e2b.litertlm",
+        listOf("LiteRT", "NEW", "2026")
     ),
     AvailableModel(
-        "Gemma 2 2B (GPU)",
-        "Verified working mirror. Fast and reliable on most Android devices.",
-        "1.35 GB",
-        "https://huggingface.co/alexdlov/gemma-2b-it-gpu-int4.bin/resolve/main/gemma-2b-it-gpu-int4.bin",
-        "gemma-2b-it-gpu-int4.bin",
-        listOf("GPU", "Stable")
-    ),
-    AvailableModel(
-        "Gemma 1.1 2B (GPU)",
-        "Highly efficient model, perfect for battery saving.",
+        "Gemma 2 2B (IT)",
+        "Verified high-performance model for mobile. Fast, stable, and smart.",
         "1.4 GB",
-        "https://huggingface.co/google/gemma-1.1-2b-it-gpu-int4/resolve/main/gemma-1.1-2b-it-gpu-int4.bin",
-        "gemma-1.1-2b-it.bin",
-        listOf("GPU", "Efficient")
+        "https://huggingface.co/litert-community/gemma-2-2b-it-litert-lm/resolve/main/gemma-2-2b-it.litertlm",
+        "gemma-2-2b.litertlm",
+        listOf("LiteRT", "Stable")
     ),
     AvailableModel(
         "Falcon 1B",
-        "Ultra-lightweight model. Works on almost any device.",
+        "Ultra-lightweight model. Works on any device without lag.",
         "0.9 GB",
         "https://huggingface.co/tiiuae/falcon-1b-it-gpu-int4/resolve/main/falcon-1b-it-gpu-int4.bin",
         "falcon-1b-it.bin",

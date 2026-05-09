@@ -6,6 +6,7 @@ enum class VoiceState { IDLE, LISTENING, THINKING, SPEAKING }
 
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
+    val currentGeneratingMessage: String = "",
     val isGenerating: Boolean = false,
     val isLoadingModel: Boolean = false,
     val status: String = "Ready",
@@ -26,5 +27,6 @@ sealed class ChatIntent {
     object DeactivateVoiceMode : ChatIntent()
     data class SetVoiceState(val state: VoiceState) : ChatIntent()
     data class SetPartialTranscript(val text: String) : ChatIntent()
+    data class DeleteSession(val sessionId: String) : ChatIntent()
 }
 

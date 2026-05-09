@@ -19,11 +19,11 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
-    historyManager: ChatHistoryManager,
+    sessions: List<String>,
     onSessionSelected: (String) -> Unit,
+    onDeleteSession: (String) -> Unit,
     openDrawer: () -> Unit
 ) {
-    var sessions by remember { mutableStateOf(historyManager.getSessionIds().toList().sortedDescending()) }
 
     Scaffold(
         topBar = { 
@@ -67,10 +67,7 @@ fun HistoryScreen(
                                 text = "Session: $dateStr",
                                 style = MaterialTheme.typography.titleMedium
                             )
-                            IconButton(onClick = {
-                                historyManager.deleteSession(sessionId)
-                                sessions = historyManager.getSessionIds().toList().sortedDescending()
-                            }) {
+                            IconButton(onClick = { onDeleteSession(sessionId) }) {
                                 Icon(Icons.Default.Delete, contentDescription = "Delete Session", tint = MaterialTheme.colorScheme.error)
                             }
                         }

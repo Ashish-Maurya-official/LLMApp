@@ -145,7 +145,7 @@ fun SettingsScreen(
                     label = { Text("Select Voice") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(voiceDropdownExpanded) },
                     modifier = Modifier
-                        .menuAnchor()
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                         .fillMaxWidth()
                 )
                 ExposedDropdownMenu(

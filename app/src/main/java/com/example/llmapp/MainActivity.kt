@@ -75,16 +75,7 @@ class MainActivity : ComponentActivity() {
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
                 
-                // Get sessions for drawer
-                // Usually we'd want this reactive, but for now we just fetch when composing drawer
-                var sessions by remember { mutableStateOf(historyManager.getSessionIds().toList().sortedDescending()) }
-                
-                // Refresh sessions whenever the drawer opens
-                LaunchedEffect(drawerState.isOpen) {
-                    if (drawerState.isOpen) {
-                        sessions = historyManager.getSessionIds().toList().sortedDescending()
-                    }
-                }
+                val sessions by viewModel.sessionList.collectAsState()
 
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -202,7 +193,8 @@ class MainActivity : ComponentActivity() {
                             }
                             composable("history") {
                                 HistoryScreen(
-                                    historyManager = historyManager,
+                                    sessions = sessions,
+                                    onDeleteSession = { sessionId -> viewModel.processIntent(ChatIntent.DeleteSession(sessionId)) },
                                     onSessionSelected = { sessionId ->
                                         viewModel.processIntent(ChatIntent.RestoreSession(sessionId))
                                         navController.navigate("chat") {

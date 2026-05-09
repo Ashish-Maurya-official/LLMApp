@@ -32,6 +32,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import android.view.HapticFeedbackConstants
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -108,20 +110,19 @@ fun ChatScreen(
         }
     }
 
-    // Fallback: simple one-shot speak when NOT in voice mode
-    val isGenerating = uiState.isGenerating
-    val messages = uiState.messages
-    var prevGenerating by remember { mutableStateOf(false) }
-    LaunchedEffect(isGenerating) {
-        if (prevGenerating && !isGenerating && !uiState.isVoiceModeActive) {
-            val last = messages.lastOrNull()
-            if (last != null && !last.isUser && last.text.isNotBlank()) {
-                voiceManager.speak(last.text)
+    // Removed fallback one-shot speak as per user request to only speak in live mode
+
+    val view = LocalView.current
+    LaunchedEffect(uiState.voiceState) {
+        if (uiState.isVoiceModeActive) {
+            when (uiState.voiceState) {
+                VoiceState.LISTENING -> view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                VoiceState.THINKING -> view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                VoiceState.SPEAKING -> view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                else -> {}
             }
         }
-        prevGenerating = isGenerating
     }
-
     fun startVoiceMode() {
         voiceManager.resetForNewGeneration()
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -237,15 +238,24 @@ fun ChatScreen(
                 }
             }
             if (uiState.isGenerating) {
-                item {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "Thinking...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                if (uiState.currentGeneratingMessage.isNotBlank()) {
+                    item {
+                        AssistantMessageBubble(
+                            text = uiState.currentGeneratingMessage,
+                            onCopy = { clipboardManager.setText(AnnotatedString(uiState.currentGeneratingMessage)) }
                         )
+                    }
+                } else {
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Thinking...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

@@ -29,7 +29,19 @@ class ChatViewModel : ViewModel() {
             }
         }
     var historyManager: ChatHistoryManager? = null
+        set(value) {
+            field = value
+            refreshSessions()
+        }
     
+    private val _sessionList = MutableStateFlow<List<String>>(emptyList())
+    val sessionList: StateFlow<List<String>> = _sessionList.asStateFlow()
+
+    fun refreshSessions() {
+        viewModelScope.launch {
+            _sessionList.value = historyManager?.getSessionIds()?.toList()?.sortedDescending() ?: emptyList()
+        }
+    }
     // Store current sessionId
     private var currentSessionId: String = System.currentTimeMillis().toString()
 
@@ -48,22 +60,39 @@ class ChatViewModel : ViewModel() {
                         // Forward raw token to VoiceManager for streaming TTS
                         onNewToken?.invoke(token, done)
 
+                        var shouldSave = false
+                        var messagesToSave: List<ChatMessage> = emptyList()
+
                         _uiState.update { state ->
-                            val currentMessages = state.messages.toMutableList()
-                            val lastIndex = currentMessages.size - 1
-                            if (lastIndex >= 0 && !currentMessages[lastIndex].isUser) {
-                                val updatedText = currentMessages[lastIndex].text + token
-                                currentMessages[lastIndex] = currentMessages[lastIndex].copy(text = updatedText)
-                            }
+                            val updatedGeneratingText = state.currentGeneratingMessage + token
 
                             if (done) {
-                                historyManager?.saveSession(currentSessionId, currentMessages)
+                                // Move finished message to main list
+                                val finalAssistantMessage = ChatMessage(updatedGeneratingText, isUser = false)
+                                val updatedMessages = state.messages + listOf(finalAssistantMessage)
+                                
+                                shouldSave = true
+                                messagesToSave = updatedMessages
+                                
+                                state.copy(
+                                    messages = updatedMessages,
+                                    currentGeneratingMessage = "",
+                                    isGenerating = false
+                                )
+                            } else {
+                                // Just append token to the temporary string
+                                state.copy(
+                                    currentGeneratingMessage = updatedGeneratingText,
+                                    isGenerating = true
+                                )
                             }
-
-                            state.copy(
-                                messages = currentMessages,
-                                isGenerating = !done
-                            )
+                        }
+                        
+                        if (shouldSave) {
+                            viewModelScope.launch {
+                                historyManager?.saveSession(currentSessionId, messagesToSave)
+                                refreshSessions()
+                            }
                         }
                     }
                 }
@@ -87,9 +116,11 @@ class ChatViewModel : ViewModel() {
                 _uiState.update { it.copy(errorMessage = intent.message, isGenerating = false, isLoadingModel = false) }
             }
             is ChatIntent.RestoreSession -> {
-                val messages = historyManager?.loadSession(intent.sessionId) ?: emptyList()
-                currentSessionId = intent.sessionId
-                _uiState.update { it.copy(messages = messages, errorMessage = null) }
+                viewModelScope.launch {
+                    val messages = historyManager?.loadSession(intent.sessionId) ?: emptyList()
+                    currentSessionId = intent.sessionId
+                    _uiState.update { it.copy(messages = messages, errorMessage = null) }
+                }
             }
             is ChatIntent.ActivateVoiceMode -> {
                 _uiState.update { it.copy(isVoiceModeActive = true, voiceState = VoiceState.LISTENING) }
@@ -103,6 +134,16 @@ class ChatViewModel : ViewModel() {
             is ChatIntent.SetPartialTranscript -> {
                 _uiState.update { it.copy(partialTranscript = intent.text) }
             }
+            is ChatIntent.DeleteSession -> {
+                viewModelScope.launch {
+                    historyManager?.deleteSession(intent.sessionId)
+                    refreshSessions()
+                    if (currentSessionId == intent.sessionId) {
+                        _uiState.update { it.copy(messages = emptyList()) }
+                        currentSessionId = System.currentTimeMillis().toString()
+                    }
+                }
+            }
         }
     }
 
@@ -110,11 +151,11 @@ class ChatViewModel : ViewModel() {
         if (text.isBlank() || _uiState.value.isGenerating) return
 
         val userMessage = ChatMessage(text, isUser = true)
-        val assistantMessage = ChatMessage("", isUser = false)
         
         _uiState.update { state ->
             state.copy(
-                messages = state.messages + listOf(userMessage, assistantMessage),
+                messages = state.messages + listOf(userMessage),
+                currentGeneratingMessage = "",
                 isGenerating = true,
                 errorMessage = null
             )
@@ -158,5 +199,10 @@ class ChatViewModel : ViewModel() {
     fun updateTheme(theme: String) {
         settingsManager?.themePreference = theme
         _themePreference.value = theme
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        llmInferenceManager?.close()
     }
 }

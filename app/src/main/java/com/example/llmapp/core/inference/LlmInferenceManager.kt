@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import java.io.File
 
+@Suppress("DEPRECATION")
 class LlmInferenceManager(private val context: Context) {
     private var llmInference: LlmInference? = null
     

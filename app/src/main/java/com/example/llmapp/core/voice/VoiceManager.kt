@@ -116,13 +116,17 @@ class VoiceManager(
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
-        // Recreate recognizer each time to avoid state machine issues
-        speechRecognizer?.destroy()
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-        speechRecognizer?.setRecognitionListener(this)
-        speechRecognizer?.startListening(intent)
-        isListening = true
-        onListeningStateChanged(true)
+        if (speechRecognizer == null) {
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
+            speechRecognizer?.setRecognitionListener(this)
+        }
+        try {
+            speechRecognizer?.startListening(intent)
+            isListening = true
+            onListeningStateChanged(true)
+        } catch (e: Exception) {
+            onError("Failed to start listening: ${e.message}")
+        }
     }
 
     fun stopListening() {
@@ -241,8 +245,16 @@ class VoiceManager(
         onListeningStateChanged(false)
         // In voice-loop mode, silently restart on transient errors instead of crashing the loop
         val isTransient = error == SpeechRecognizer.ERROR_NO_MATCH ||
-                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                error == SpeechRecognizer.ERROR_CLIENT ||
+                error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                
         if (isVoiceModeActive && isTransient) {
+            // If it's a structural error, destroy and recreate
+            if (error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            }
             mainHandler.postDelayed({ startListening() }, 600)
         } else {
             val msg = when (error) {
@@ -250,6 +262,7 @@ class VoiceManager(
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission denied"
                 SpeechRecognizer.ERROR_NETWORK -> "Network error in recognition"
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
+                SpeechRecognizer.ERROR_CLIENT -> "Client error"
                 else -> "Recognition error ($error)"
             }
             onError(msg)

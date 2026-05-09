@@ -1,27 +1,20 @@
 package com.example.llmapp.core.voice
 
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.media.AudioAttributes
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import java.util.*
 
 /**
- * VoiceManager v2 — "Gemini Live" style continuous voice loop.
- *
- * Full pipeline:
- *  1. STT captures user speech → onSpeechResult
- *  2. LLM streams tokens in → feedToken(token)
- *  3. Sentence buffer chunks by punctuation → speaks each sentence immediately
- *  4. UtteranceProgressListener detects when TTS finishes last sentence
- *  5. Automatically re-opens the mic for the next turn
+ * VoiceManager v3 — Custom Whisper STT + Android TTS.
  */
 class VoiceManager(
     private val context: Context,
@@ -36,9 +29,14 @@ class VoiceManager(
     private val language: String = "English"
 ) : RecognitionListener, TextToSpeech.OnInitListener {
 
-    private var speechRecognizer: SpeechRecognizer? = null
     private var textToSpeech: TextToSpeech? = null
     
+    // Custom STT Components
+    private var rawAudioRecorder: RawAudioRecorder? = null
+    private var whisperEngine: WhisperSttEngine? = null
+    private val audioBuffer = mutableListOf<Short>()
+    private val sttScope = CoroutineScope(Dispatchers.Main + Job())
+
     private fun getLocaleForLanguage(): Locale {
         return when (language.lowercase(Locale.getDefault())) {
             "hindi" -> Locale("hi", "IN")
@@ -60,13 +58,28 @@ class VoiceManager(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     init {
-        if (SpeechRecognizer.isRecognitionAvailable(context)) {
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-            speechRecognizer?.setRecognitionListener(this)
-        } else {
-            onError("Speech recognition not available on this device.")
-        }
+        whisperEngine = WhisperSttEngine(context)
+        rawAudioRecorder = RawAudioRecorder(
+            onAudioData = { data -> audioBuffer.addAll(data.toList()) },
+            onSilenceDetected = { 
+                mainHandler.post {
+                    stopListening()
+                    processWhisper() 
+                }
+            },
+            onSpeechDetected = { /* pulse UI? */ }
+        )
         textToSpeech = TextToSpeech(context, this)
+    }
+
+    private fun processWhisper() {
+        val data = audioBuffer.toShortArray()
+        audioBuffer.clear()
+        if (data.isNotEmpty()) {
+            whisperEngine?.transcribe(data) { text ->
+                mainHandler.post { onSpeechResult(text) }
+            }
+        }
     }
 
     override fun onInit(status: Int) {
@@ -80,7 +93,7 @@ class VoiceManager(
             textToSpeech?.language = getLocaleForLanguage()
             textToSpeech?.setSpeechRate(speechRate)
             textToSpeech?.setPitch(1.0f)
-            // Apply saved voice if set
+            
             if (voiceName.isNotBlank()) {
                 val voice = textToSpeech?.voices?.find { it.name == voiceName }
                 if (voice != null) textToSpeech?.voice = voice
@@ -97,20 +110,15 @@ class VoiceManager(
                 mainHandler.post {
                     isSpeaking = true
                     onSpeakingStateChanged(true)
-                    if (isVoiceModeActive) {
-                        startListening()
-                    }
                 }
             }
 
             override fun onDone(utteranceId: String?) {
                 mainHandler.post {
-                    // Only restart listening when the LAST sentence of the current generation is done
                     if (utteranceId == lastSpokenUtteranceId && generationDone) {
                         isSpeaking = false
                         onSpeakingStateChanged(false)
                         if (isVoiceModeActive) {
-                            // Small natural pause before listening again (like a real conversation)
                             mainHandler.postDelayed({ startListening() }, 400)
                         }
                     }
@@ -129,43 +137,23 @@ class VoiceManager(
     // ─── STT ────────────────────────────────────────────────────────────────
 
     fun startListening() {
-        if (isListening) return
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, getLocaleForLanguage())
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        }
-        if (speechRecognizer == null) {
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-            speechRecognizer?.setRecognitionListener(this)
-        }
-        try {
-            speechRecognizer?.startListening(intent)
-            isListening = true
-            onListeningStateChanged(true)
-        } catch (e: Exception) {
-            onError("Failed to start listening: ${e.message}")
-        }
+        if (isListening || isSpeaking) return
+        isListening = true
+        onListeningStateChanged(true)
+        rawAudioRecorder?.start(sttScope)
     }
 
     fun stopListening() {
         if (!isListening) return
-        speechRecognizer?.stopListening()
         isListening = false
         onListeningStateChanged(false)
+        rawAudioRecorder?.stop()
     }
 
     // ─── TTS Streaming Pipeline ──────────────────────────────────────────────
 
-    /**
-     * Called for every token the LLM emits.
-     * [done] = true signals the LLM has finished generating.
-     */
     fun feedToken(token: String, done: Boolean) {
         sentenceBuffer.append(token)
-
-        // Look for a sentence-ending punctuation to speak immediately
         val bufferText = sentenceBuffer.toString()
         val splitIndex = findSentenceBoundary(bufferText)
 
@@ -177,19 +165,16 @@ class VoiceManager(
 
         if (done) {
             generationDone = true
-            // Flush whatever is left in the buffer
             val remaining = sentenceBuffer.toString().trim()
             sentenceBuffer.clear()
             if (remaining.isNotBlank()) {
                 speakSentence(remaining, isLast = true)
             } else {
-                // Nothing left to speak, mark the last issued utterance as the final one
                 lastSpokenUtteranceId = "utt_${utteranceCounter}"
             }
         }
     }
 
-    /** Call this before a new user message so old buffered state is cleared */
     fun resetForNewGeneration() {
         generationDone = false
         sentenceBuffer.clear()
@@ -204,7 +189,6 @@ class VoiceManager(
         textToSpeech?.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
     }
 
-    /** Returns the index just after the last sentence-ending char, or -1 if none found */
     private fun findSentenceBoundary(text: String): Int {
         val endings = listOf(". ", "! ", "? ", ".\n", "!\n", "?\n", ": ")
         var best = -1
@@ -215,8 +199,6 @@ class VoiceManager(
         return best
     }
 
-    // ─── Interrupt (Barge-In) ────────────────────────────────────────────────
-
     fun interrupt() {
         textToSpeech?.stop()
         isSpeaking = false
@@ -225,8 +207,6 @@ class VoiceManager(
         generationDone = false
         if (isVoiceModeActive) startListening()
     }
-
-    // ─── Simple one-shot speak (for non-voice-mode use) ─────────────────────
 
     fun speak(text: String) {
         utteranceCounter++
@@ -244,77 +224,20 @@ class VoiceManager(
 
     fun destroy() {
         isVoiceModeActive = false
-        speechRecognizer?.destroy()
         textToSpeech?.stop()
         textToSpeech?.shutdown()
+        rawAudioRecorder?.stop()
     }
 
-    // ─── RecognitionListener ─────────────────────────────────────────────────
+    // ─── RecognitionListener (Legacy/Unused) ────────────────────────────────
 
     override fun onReadyForSpeech(params: Bundle?) {}
     override fun onBeginningOfSpeech() {}
     override fun onRmsChanged(rmsdB: Float) {}
     override fun onBufferReceived(buffer: ByteArray?) {}
-    override fun onEndOfSpeech() {
-        isListening = false
-        onListeningStateChanged(false)
-    }
-
-    override fun onError(error: Int) {
-        isListening = false
-        onListeningStateChanged(false)
-        // In voice-loop mode, silently restart on transient errors instead of crashing the loop
-        val isTransient = error == SpeechRecognizer.ERROR_NO_MATCH ||
-                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                error == SpeechRecognizer.ERROR_CLIENT ||
-                error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
-                
-        if (isVoiceModeActive && isTransient) {
-            // If it's a structural error, destroy and recreate
-            if (error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
-                speechRecognizer?.destroy()
-                speechRecognizer = null
-            }
-            mainHandler.postDelayed({ startListening() }, 600)
-        } else {
-            val msg = when (error) {
-                SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission denied"
-                SpeechRecognizer.ERROR_NETWORK -> "Network error in recognition"
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
-                SpeechRecognizer.ERROR_CLIENT -> "Client error"
-                else -> "Recognition error ($error)"
-            }
-            onError(msg)
-        }
-    }
-
-    override fun onResults(results: Bundle?) {
-        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-        if (!matches.isNullOrEmpty()) {
-            onSpeechResult(matches[0])
-        } else if (isVoiceModeActive) {
-            // Empty result — loop back to listening
-            mainHandler.postDelayed({ startListening() }, 400)
-        }
-    }
-
-    override fun onPartialResults(partialResults: Bundle?) {
-        val partial = partialResults
-            ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            ?.firstOrNull()
-        if (!partial.isNullOrBlank()) {
-            mainHandler.post { 
-                onPartialResult?.invoke(partial) 
-                // Barge-in logic: if AI is speaking and user says >= 2 words, interrupt!
-                if (isSpeaking && partial.trim().split("\\s+".toRegex()).size >= 2) {
-                    textToSpeech?.stop()
-                    isSpeaking = false
-                    onSpeakingStateChanged(false)
-                    onInterrupted()
-                }
-            }
-        }
-    }
+    override fun onEndOfSpeech() {}
+    override fun onError(error: Int) {}
+    override fun onResults(results: Bundle?) {}
+    override fun onPartialResults(partialResults: Bundle?) {}
     override fun onEvent(eventType: Int, params: Bundle?) {}
 }

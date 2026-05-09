@@ -8,6 +8,9 @@ import com.example.llmapp.core.settings.SettingsManager
 import com.example.llmapp.ui.state.ChatIntent
 import com.example.llmapp.ui.state.ChatUiState
 import com.example.llmapp.ui.state.VoiceState
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,14 +18,18 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Agent state machine states:
- *  IDLE                – not running
- *  GENERATING          – LLM is streaming tokens (initial or synthesis)
- *  SEARCHING           – LLM is still draining its first stream, search is running
- *  WAITING_FOR_SEARCH  – LLM engine is idle/done, but search is still running
- *  RESUMING            – deprecated/bridge state
+ * Agent state machine states: IDLE – not running GENERATING – LLM is streaming tokens (initial or
+ * synthesis) SEARCHING – LLM is still draining its first stream, search is running
+ * WAITING_FOR_SEARCH – LLM engine is idle/done, but search is still running RESUMING –
+ * deprecated/bridge state
  */
-private enum class AgentPhase { IDLE, GENERATING, SEARCHING, WAITING_FOR_SEARCH, RESUMING }
+private enum class AgentPhase {
+    IDLE,
+    GENERATING,
+    SEARCHING,
+    WAITING_FOR_SEARCH,
+    RESUMING
+}
 
 class ChatViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -48,7 +55,8 @@ class ChatViewModel : ViewModel() {
 
     fun refreshSessions() {
         viewModelScope.launch {
-            _sessionList.value = historyManager?.getSessionIds()?.toList()?.sortedDescending() ?: emptyList()
+            _sessionList.value =
+                    historyManager?.getSessionIds()?.toList()?.sortedDescending() ?: emptyList()
         }
     }
 
@@ -63,7 +71,7 @@ class ChatViewModel : ViewModel() {
     // When the web search returns we store the result here.
     private data class SearchResult(val llmText: String, val uiText: String)
     @Volatile private var pendingSearchResult: SearchResult? = null
-    
+
     // Store the context so we can attach it to the final message's history
     @Volatile private var lastSearchResultContext: String? = null
 
@@ -78,9 +86,7 @@ class ChatViewModel : ViewModel() {
             field = value
             value?.let { manager ->
                 viewModelScope.launch {
-                    manager.outputFlow.collect { (token, done) ->
-                        handleToken(token, done)
-                    }
+                    manager.outputFlow.collect { (token, done) -> handleToken(token, done) }
                 }
             }
         }
@@ -91,10 +97,12 @@ class ChatViewModel : ViewModel() {
 
     private fun handleToken(token: String, done: Boolean) {
         when (agentPhase) {
-
-            AgentPhase.IDLE    -> { /* spurious token – ignore */ }
-            AgentPhase.RESUMING -> { /* ignore overlapping old stream */ }
-
+            AgentPhase.IDLE -> {
+                /* spurious token – ignore */
+            }
+            AgentPhase.RESUMING -> {
+                /* ignore overlapping old stream */
+            }
             AgentPhase.SEARCHING -> {
                 // LLM engine is draining its first stream (the one that output sentinel).
                 // We must wait for done=true before we can safely start a new generation.
@@ -109,7 +117,9 @@ class ChatViewModel : ViewModel() {
                             llmInferenceManager?.generateResponseAsync(prompt)
                         } catch (e: Exception) {
                             agentPhase = AgentPhase.IDLE
-                            _uiState.update { it.copy(isGenerating = false, errorMessage = e.message) }
+                            _uiState.update {
+                                it.copy(isGenerating = false, errorMessage = e.message)
+                            }
                         }
                     } else {
                         // Search still running. Switch to waiting state.
@@ -118,11 +128,9 @@ class ChatViewModel : ViewModel() {
                     }
                 }
             }
-
             AgentPhase.WAITING_FOR_SEARCH -> {
                 // Engine is idle, waiting for search results. Ignore tokens.
             }
-
             AgentPhase.GENERATING -> {
                 var shouldSave = false
                 var messagesToSave: List<ChatMessage> = emptyList()
@@ -131,75 +139,81 @@ class ChatViewModel : ViewModel() {
                     val newRaw = state.currentGeneratingRawContent + token
 
                     // ── Sentinel & Refusal detection ────────────────────────────────
-                    val refusalPhrases = listOf(
-                        "I do not have access",
-                        "I cannot access",
-                        "I don't have access",
-                        "real-time information",
-                        "as an AI",
-                        "I am an AI"
-                    )
+                    val refusalPhrases =
+                            listOf(
+                                    "I do not have access",
+                                    "I cannot access",
+                                    "I don't have access",
+                                    "as an AI",
+                                    "I am an AI"
+                            )
                     val isRefusal = refusalPhrases.any { newRaw.contains(it, ignoreCase = true) }
-                    
-                    if (pendingAction == null && (newRaw.contains(SEARCH_SENTINEL) || isRefusal) && state.currentActions.isEmpty()) {
+
+                    if (pendingAction == null &&
+                                    (newRaw.contains(SEARCH_SENTINEL) || isRefusal) &&
+                                    state.currentActions.isEmpty()
+                    ) {
                         val query = currentUserQuery
                         agentPhase = AgentPhase.SEARCHING
                         pendingAction = AgentAction("WebSearch", query)
 
                         return@update state.copy(
-                            currentGeneratingRawContent = "",   // discard sentinel/refusal
-                            currentGeneratingMessage    = "",
-                            currentActions = listOf(AgentAction("WebSearch", query))
+                                currentGeneratingRawContent = "", // discard sentinel/refusal
+                                currentGeneratingMessage = "",
+                                currentActions = listOf(AgentAction("WebSearch", query))
                         )
                     }
 
                     // ── Extract visible answer text ────────────────────────────────
-                    val displayText = newRaw
-                        .replace(SEARCH_SENTINEL, "")
-                        .trimStart()
+                    val displayText = newRaw.replace(SEARCH_SENTINEL, "").trimStart()
 
                     // Forward only NEW text to TTS
                     val currentText = state.currentGeneratingMessage
-                    val newTtsText = if (displayText.length > currentText.length)
-                        displayText.substring(currentText.length) else ""
-                    
+                    val newTtsText =
+                            if (displayText.length > currentText.length)
+                                    displayText.substring(currentText.length)
+                            else ""
+
                     if (newTtsText.isNotEmpty()) onNewToken?.invoke(newTtsText, done)
                     else if (done && displayText.isNotEmpty()) onNewToken?.invoke("", true)
 
                     // ── Generation complete ──────────────────────────────────────────
                     if (done) {
                         agentPhase = AgentPhase.IDLE
-                        
-                        // Trick the LLM into thinking it successfully used the SEARCH_SENTINEL in its history!
-                        val finalRawContent = if (lastSearchResultContext != null) {
-                            "$SEARCH_SENTINEL<end_of_turn>\n<start_of_turn>user\nI have searched the internet for you. Here are the search results:\n\n$lastSearchResultContext\n<end_of_turn>\n<start_of_turn>model\n$newRaw"
-                        } else newRaw
+
+                        // Trick the LLM into thinking it successfully used the SEARCH_SENTINEL in
+                        // its history!
+                        val finalRawContent =
+                                if (lastSearchResultContext != null) {
+                                    "$SEARCH_SENTINEL<end_of_turn>\n<start_of_turn>user\nI have searched the internet for you. Here are the search results:\n\n$lastSearchResultContext\n<end_of_turn>\n<start_of_turn>model\n$newRaw"
+                                } else newRaw
                         lastSearchResultContext = null
-                        
-                        val finalMsg = ChatMessage(
-                            text = displayText,
-                            isUser = false,
-                            thoughts = emptyList(),
-                            actions  = state.currentActions,
-                            rawContent = finalRawContent
-                        )
+
+                        val finalMsg =
+                                ChatMessage(
+                                        text = displayText,
+                                        isUser = false,
+                                        thoughts = emptyList(),
+                                        actions = state.currentActions,
+                                        rawContent = finalRawContent
+                                )
                         val updatedMessages = state.messages + finalMsg
                         shouldSave = true
                         messagesToSave = updatedMessages
 
                         state.copy(
-                            messages = updatedMessages,
-                            currentGeneratingMessage    = "",
-                            currentGeneratingRawContent = "",
-                            currentThoughts = emptyList(),
-                            currentActions  = emptyList(),
-                            isGenerating = false
+                                messages = updatedMessages,
+                                currentGeneratingMessage = "",
+                                currentGeneratingRawContent = "",
+                                currentThoughts = emptyList(),
+                                currentActions = emptyList(),
+                                isGenerating = false
                         )
                     } else {
                         state.copy(
-                            currentGeneratingRawContent = newRaw,
-                            currentGeneratingMessage    = displayText,
-                            isGenerating = true
+                                currentGeneratingRawContent = newRaw,
+                                currentGeneratingMessage = displayText,
+                                isGenerating = true
                         )
                     }
                 }
@@ -235,7 +249,7 @@ class ChatViewModel : ViewModel() {
         val currentActions = _uiState.value.currentActions.toMutableList()
         if (currentActions.isNotEmpty() && uiText != null) {
             currentActions[currentActions.lastIndex] =
-                currentActions.last().copy(uiSources = uiText)
+                    currentActions.last().copy(uiSources = uiText)
         }
 
         _uiState.update { it.copy(currentActions = currentActions) }
@@ -262,22 +276,34 @@ class ChatViewModel : ViewModel() {
     // ── Intent handler ────────────────────────────────────────────────────────
     fun processIntent(intent: ChatIntent) {
         when (intent) {
-            is ChatIntent.SendMessage       -> handleSendMessage(intent.text)
-            is ChatIntent.ClearHistory      -> {
+            is ChatIntent.SendMessage -> handleSendMessage(intent.text)
+            is ChatIntent.ClearHistory -> {
                 _uiState.update { it.copy(messages = emptyList()) }
                 currentSessionId = System.currentTimeMillis().toString()
             }
-            is ChatIntent.LoadModel         -> {
-                _uiState.update { it.copy(status = "Loading model via MediaPipe GPU...", isLoadingModel = true, errorMessage = null) }
+            is ChatIntent.LoadModel -> {
+                _uiState.update {
+                    it.copy(
+                            status = "Loading model via MediaPipe GPU...",
+                            isLoadingModel = true,
+                            errorMessage = null
+                    )
+                }
             }
-            is ChatIntent.ModelLoaded       -> {
+            is ChatIntent.ModelLoaded -> {
                 _uiState.update { it.copy(status = "Ready", isLoadingModel = false) }
             }
-            is ChatIntent.SetError          -> {
+            is ChatIntent.SetError -> {
                 agentPhase = AgentPhase.IDLE
-                _uiState.update { it.copy(errorMessage = intent.message, isGenerating = false, isLoadingModel = false) }
+                _uiState.update {
+                    it.copy(
+                            errorMessage = intent.message,
+                            isGenerating = false,
+                            isLoadingModel = false
+                    )
+                }
             }
-            is ChatIntent.RestoreSession    -> {
+            is ChatIntent.RestoreSession -> {
                 viewModelScope.launch {
                     val messages = historyManager?.loadSession(intent.sessionId) ?: emptyList()
                     currentSessionId = intent.sessionId
@@ -285,18 +311,26 @@ class ChatViewModel : ViewModel() {
                 }
             }
             is ChatIntent.ActivateVoiceMode -> {
-                _uiState.update { it.copy(isVoiceModeActive = true, voiceState = VoiceState.LISTENING) }
+                _uiState.update {
+                    it.copy(isVoiceModeActive = true, voiceState = VoiceState.LISTENING)
+                }
             }
             is ChatIntent.DeactivateVoiceMode -> {
-                _uiState.update { it.copy(isVoiceModeActive = false, voiceState = VoiceState.IDLE, partialTranscript = "") }
+                _uiState.update {
+                    it.copy(
+                            isVoiceModeActive = false,
+                            voiceState = VoiceState.IDLE,
+                            partialTranscript = ""
+                    )
+                }
             }
-            is ChatIntent.SetVoiceState     -> {
+            is ChatIntent.SetVoiceState -> {
                 _uiState.update { it.copy(voiceState = intent.state) }
             }
             is ChatIntent.SetPartialTranscript -> {
                 _uiState.update { it.copy(partialTranscript = intent.text) }
             }
-            is ChatIntent.DeleteSession     -> {
+            is ChatIntent.DeleteSession -> {
                 viewModelScope.launch {
                     historyManager?.deleteSession(intent.sessionId)
                     refreshSessions()
@@ -306,19 +340,19 @@ class ChatViewModel : ViewModel() {
                     }
                 }
             }
-            is ChatIntent.StopGeneration    -> {
+            is ChatIntent.StopGeneration -> {
                 if (_uiState.value.isGenerating) {
                     agentPhase = AgentPhase.IDLE
                     pendingAction = null
                     pendingSearchResult = null
                     _uiState.update {
                         it.copy(
-                            isGenerating = false,
-                            currentGeneratingMessage    = "",
-                            currentGeneratingRawContent = "",
-                            currentThoughts = emptyList(),
-                            currentActions  = emptyList(),
-                            status = "Stopped"
+                                isGenerating = false,
+                                currentGeneratingMessage = "",
+                                currentGeneratingRawContent = "",
+                                currentThoughts = emptyList(),
+                                currentActions = emptyList(),
+                                status = "Stopped"
                         )
                     }
                 }
@@ -337,42 +371,49 @@ class ChatViewModel : ViewModel() {
         val userMessage = ChatMessage(text, isUser = true)
         _uiState.update { state ->
             state.copy(
-                messages = state.messages + listOf(userMessage),
-                currentGeneratingMessage    = "",
-                currentGeneratingRawContent = "",
-                currentThoughts = emptyList(),
-                currentActions  = emptyList(),
-                isGenerating = true,
-                errorMessage = null
+                    messages = state.messages + listOf(userMessage),
+                    currentGeneratingMessage = "",
+                    currentGeneratingRawContent = "",
+                    currentThoughts = emptyList(),
+                    currentActions = emptyList(),
+                    isGenerating = true,
+                    errorMessage = null
             )
         }
 
-        val modelPrompt = try {
-            buildPromptForMessage(text)
-        } catch (e: Exception) {
-            agentPhase = AgentPhase.IDLE
-            _uiState.update { it.copy(isGenerating = false, errorMessage = e.message ?: "Unknown error") }
-            return
-        }
+        val modelPrompt =
+                try {
+                    buildPromptForMessage(text)
+                } catch (e: Exception) {
+                    agentPhase = AgentPhase.IDLE
+                    _uiState.update {
+                        it.copy(isGenerating = false, errorMessage = e.message ?: "Unknown error")
+                    }
+                    return
+                }
         try {
             llmInferenceManager?.generateResponseAsync(modelPrompt)
         } catch (e: Exception) {
             agentPhase = AgentPhase.IDLE
-            _uiState.update { it.copy(isGenerating = false, errorMessage = e.message ?: "Unknown error") }
+            _uiState.update {
+                it.copy(isGenerating = false, errorMessage = e.message ?: "Unknown error")
+            }
         }
     }
 
     private fun buildPromptWithContext(userText: String, searchContext: String): String {
         val history = _uiState.value.messages
-        val userSystemPrompt = settingsManager?.systemPrompt ?: ""
+        val systemPrompt = buildSystemPrompt()
         val sb = StringBuilder()
-
         sb.append("<start_of_turn>user\n")
-        sb.append("You are a helpful AI assistant. ${if (userSystemPrompt.isNotBlank()) userSystemPrompt else ""}\n")
+        sb.append(systemPrompt)
         sb.append("<end_of_turn>\n")
         sb.append("<start_of_turn>model\nSure, I am ready to help!<end_of_turn>\n")
 
-        for (msg in history.dropLast(1)) {
+        val limit = settingsManager?.contextLimit ?: 10
+        val messagesToInclude = history.dropLast(1).takeLast(limit)
+
+        for (msg in messagesToInclude) {
             val content = if (msg.rawContent.isNotBlank()) msg.rawContent else msg.text
             if (content.isBlank()) continue
             if (msg.isUser) sb.append("<start_of_turn>user\n$content<end_of_turn>\n")
@@ -385,7 +426,9 @@ class ChatViewModel : ViewModel() {
         sb.append("\n\nINSTRUCTIONS:\n")
         sb.append("1. Use the search results above to answer the user's question accurately.\n")
         sb.append("2. Answer naturally and conversationally.\n")
-        sb.append("3. Do NOT output the [SEARCH_NEEDED] token now, as the search is already complete.\n")
+        sb.append(
+                "3. Do NOT output the [SEARCH_NEEDED] token now, as the search is already complete.\n"
+        )
         sb.append("\nUser Question: $userText")
         sb.append("<end_of_turn>\n")
         sb.append("<start_of_turn>model\n")
@@ -403,39 +446,61 @@ class ChatViewModel : ViewModel() {
         _themePreference.value = theme
     }
 
-    private fun buildPromptFromHistory(messages: List<ChatMessage>, pendingUserText: String = ""): String {
-        val userSystemPrompt = settingsManager?.systemPrompt ?: ""
+    private fun buildSystemPrompt(): String {
+        val manager = settingsManager ?: return "Helpful AI assistant."
+        val sb = StringBuilder("You are a helpful, empathetic AI assistant. ")
+        
+        // Dynamic User Persona (Merged for token efficiency)
+        val name = manager.userName
+        val dob = manager.userDob
+        val loc = manager.userLocation
+        val bio = manager.userBio
+        
+        if (name.isNotBlank() || dob.isNotBlank() || loc.isNotBlank() || bio.isNotBlank()) {
+            sb.append("\nUser: ${if(name.isNotBlank()) name else "User"}")
+            val details = mutableListOf<String>()
+            if (dob.isNotBlank()) details.add("born $dob")
+            if (loc.isNotBlank()) details.add("in $loc")
+            if (details.isNotEmpty()) sb.append(" (${details.joinToString(", ")})")
+            if (bio.isNotBlank()) sb.append(". Interests: $bio")
+            sb.append(". Provide personalized, human-like responses.")
+        }
+
+        if (manager.systemPrompt.isNotBlank()) sb.append("\nNotes: ${manager.systemPrompt}")
+        
+        val time = SimpleDateFormat("MMMM yyyy, EEE d, HH:mm", Locale.getDefault()).format(Date())
+        sb.append("\nTime: $time")
+
+        // Compressed Style Guide
+        sb.append("\nStyle: Professional Markdown (headers/bold/tables). Human-like tone. No AI clichés.")
+        
+        return sb.toString()
+    }
+
+    private fun buildPromptFromHistory(
+            messages: List<ChatMessage>,
+            pendingUserText: String = ""
+    ): String {
         val sb = StringBuilder()
 
         sb.append("<start_of_turn>user\n")
-        sb.append("""
-You are a helpful AI assistant.
-${if (userSystemPrompt.isNotBlank()) userSystemPrompt else ""}
-
-IMPORTANT RULE:
-If you cannot answer a question from your own knowledge (e.g. current weather, today's news, live scores, real-time prices, recent events), you MUST output ONLY this exact token and nothing else:
-$SEARCH_SENTINEL
-
-Do NOT say "I don't have access" or "I cannot search the internet".
-Do NOT try to answer if you don't know.
-Just output $SEARCH_SENTINEL and stop.
-
-If you CAN answer from your knowledge, answer normally and helpfully.
-        """.trimIndent())
+        sb.append(buildSystemPrompt())
+        sb.append("\n\nRULE: If current knowledge is insufficient (weather/news/scores/real-time), output ONLY: $SEARCH_SENTINEL. No disclaimers.")
         sb.append("<end_of_turn>\n")
-        sb.append("<start_of_turn>model\n")
-        sb.append("Understood. If I don't have the information, I will output $SEARCH_SENTINEL and stop.")
-        sb.append("<end_of_turn>\n")
+        sb.append("<start_of_turn>model\nUnderstood. I will use $SEARCH_SENTINEL when needed and respond naturally.<end_of_turn>\n")
 
-        // Few-shots
-        sb.append("<start_of_turn>user\nWhat is the weather in Delhi right now?<end_of_turn>\n")
-        sb.append("<start_of_turn>model\n$SEARCH_SENTINEL<end_of_turn>\n")
-        sb.append("<start_of_turn>user\nWhat is the capital of France?<end_of_turn>\n")
-        sb.append("<start_of_turn>model\nThe capital of France is Paris.<end_of_turn>\n")
-        sb.append("<start_of_turn>user\nWhat are the latest cricket scores?<end_of_turn>\n")
-        sb.append("<start_of_turn>model\n$SEARCH_SENTINEL<end_of_turn>\n")
+        // Conditional Few-shots: Only show if history is short to save tokens
+        if (messages.size < 4) {
+            sb.append("<start_of_turn>user\nWhat is the weather in Delhi?<end_of_turn>\n")
+            sb.append("<start_of_turn>model\n$SEARCH_SENTINEL<end_of_turn>\n")
+            sb.append("<start_of_turn>user\nCapital of France?<end_of_turn>\n")
+            sb.append("<start_of_turn>model\nParis.<end_of_turn>\n")
+        }
 
-        for (msg in messages) {
+        val limit = settingsManager?.contextLimit ?: 10
+        val historyToInclude = messages.dropLast(1).takeLast(limit)
+
+        for (msg in historyToInclude) {
             val contentToUse = if (msg.rawContent.isNotBlank()) msg.rawContent else msg.text
             if (contentToUse.isBlank()) continue
             if (msg.isUser) sb.append("<start_of_turn>user\n${contentToUse}<end_of_turn>\n")

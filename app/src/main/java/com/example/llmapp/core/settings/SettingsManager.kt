@@ -34,7 +34,27 @@ class SettingsManager(context: Context) {
         get() = prefs.getFloat("tts_speech_rate", 0.95f)
         set(value) = prefs.edit().putFloat("tts_speech_rate", value).apply()
 
+    var contextLimit: Int
+        get() = prefs.getInt("context_limit", 10)
+        set(value) = prefs.edit().putInt("context_limit", value).apply()
+
     var language: String
         get() = prefs.getString("language", "English") ?: "English"
         set(value) = prefs.edit().putString("language", value).apply()
+
+    var userName: String
+        get() = prefs.getString("user_name", "") ?: ""
+        set(value) = prefs.edit().putString("user_name", value).apply()
+
+    var userDob: String
+        get() = prefs.getString("user_dob", "") ?: ""
+        set(value) = prefs.edit().putString("user_dob", value).apply()
+
+    var userLocation: String
+        get() = prefs.getString("user_location", "") ?: ""
+        set(value) = prefs.edit().putString("user_location", value).apply()
+
+    var userBio: String
+        get() = prefs.getString("user_bio", "") ?: ""
+        set(value) = prefs.edit().putString("user_bio", value).apply()
 }

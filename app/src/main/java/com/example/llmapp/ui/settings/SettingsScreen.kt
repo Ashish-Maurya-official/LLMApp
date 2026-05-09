@@ -30,6 +30,7 @@ fun SettingsScreen(
     var topK by remember { mutableFloatStateOf(settingsManager.topK.toFloat()) }
     var systemPrompt by remember { mutableStateOf(settingsManager.systemPrompt) }
     var ttsSpeechRate by remember { mutableFloatStateOf(settingsManager.ttsSpeechRate) }
+    var contextLimit by remember { mutableFloatStateOf(settingsManager.contextLimit.toFloat()) }
     var selectedVoiceName by remember { mutableStateOf(settingsManager.ttsVoiceName) }
     var language by remember { mutableStateOf(settingsManager.language) }
     var languageDropdownExpanded by remember { mutableStateOf(false) }
@@ -118,6 +119,14 @@ fun SettingsScreen(
                 value = topK,
                 onValueChange = { topK = it; settingsManager.topK = it.toInt() },
                 valueRange = 1f..100f
+            )
+
+            Text("History Limit (Messages): ${contextLimit.toInt()}", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = contextLimit,
+                onValueChange = { contextLimit = it; settingsManager.contextLimit = it.toInt() },
+                valueRange = 1f..50f,
+                steps = 48
             )
 
             Spacer(Modifier.height(20.dp))

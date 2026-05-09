@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -127,6 +128,21 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             
+                            NavigationDrawerItem(
+                                icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
+                                label = { Text("Profile") },
+                                selected = currentRoute == "profile",
+                                onClick = {
+                                    scope.launch { drawerState.close() }
+                                    navController.navigate("profile") {
+                                        popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                            )
+
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             
                             NavigationDrawerItem(
@@ -212,6 +228,12 @@ class MainActivity : ComponentActivity() {
                                     settingsManager = settingsManager,
                                     currentTheme = currentTheme,
                                     onThemeChanged = { newTheme -> viewModel.updateTheme(newTheme) },
+                                    openDrawer = { scope.launch { drawerState.open() } }
+                                )
+                            }
+                            composable("profile") {
+                                com.example.llmapp.ui.profile.ProfileScreen(
+                                    settingsManager = settingsManager,
                                     openDrawer = { scope.launch { drawerState.open() } }
                                 )
                             }

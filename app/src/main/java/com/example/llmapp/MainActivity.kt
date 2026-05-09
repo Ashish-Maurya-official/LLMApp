@@ -35,9 +35,9 @@ import com.example.llmapp.ui.settings.SettingsScreen
 import com.example.llmapp.ui.history.HistoryScreen
 import com.example.llmapp.ui.state.ChatIntent
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.lifecycleScope
 
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
@@ -244,9 +244,8 @@ class MainActivity : ComponentActivity() {
     }
     private fun initModel(path: String) {
         viewModel.processIntent(ChatIntent.LoadModel(path))
-        MainScope().launch(Dispatchers.IO) {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // Read configuration directly from SettingsManager
                 val loadedBackend = llmInferenceManager.loadModel(
                     modelPath = path,
                     hardwareBackend = settingsManager.hardwareBackend,

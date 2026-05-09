@@ -69,6 +69,8 @@ class ModelDownloader(private val context: Context) {
 
     fun getLocalModels(): List<String> {
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return emptyList()
-        return dir.listFiles()?.filter { it.name.endsWith(".bin") }?.map { it.absolutePath } ?: emptyList()
+        return dir.listFiles()
+            ?.filter { it.name.endsWith(".bin") || it.name.endsWith(".litertlm") }
+            ?.map { it.absolutePath } ?: emptyList()
     }
 }

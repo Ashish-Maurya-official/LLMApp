@@ -15,7 +15,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Agent state machine states: IDLE – not running GENERATING – LLM is streaming tokens (initial or
@@ -55,8 +57,9 @@ class ChatViewModel : ViewModel() {
 
     fun refreshSessions() {
         viewModelScope.launch {
-            _sessionList.value =
-                    historyManager?.getSessionIds()?.toList()?.sortedDescending() ?: emptyList()
+            _sessionList.value = withContext(Dispatchers.IO) {
+                historyManager?.getSessionIds()?.toList()?.sortedDescending() ?: emptyList()
+            }
         }
     }
 
@@ -306,7 +309,9 @@ class ChatViewModel : ViewModel() {
             }
             is ChatIntent.RestoreSession -> {
                 viewModelScope.launch {
-                    val messages = historyManager?.loadSession(intent.sessionId) ?: emptyList()
+                    val messages = withContext(Dispatchers.IO) {
+                        historyManager?.loadSession(intent.sessionId) ?: emptyList()
+                    }
                     currentSessionId = intent.sessionId
                     _uiState.update { it.copy(messages = messages, errorMessage = null) }
                 }

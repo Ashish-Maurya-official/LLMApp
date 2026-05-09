@@ -104,23 +104,44 @@ fun ModelScreen(
     // Track per-model download progress (0..1), null = not downloading
     val downloadProgress = remember { mutableStateMapOf<String, Float>() }
 
-    // Check which models are already on disk
-    val downloadedModels = remember(models) {
-        models.filter { modelDownloader.getDownloadedModelPath(it.fileName) != null }
-            .map { it.name }.toSet()
-    }.let { mutableStateOf(it) }.value
+    // Reactive set of downloaded model names — updated explicitly after each download completes
+    var downloadedModels by remember { mutableStateOf(emptySet<String>()) }
+
+    // Helper to re-scan disk and refresh the set
+    fun refreshDownloadedModels(currentModels: List<AvailableModel>) {
+        downloadedModels = currentModels
+            .filter { modelDownloader.getDownloadedModelPath(it.fileName) != null }
+            .map { it.name }
+            .toSet()
+    }
 
     // Fetch remote catalog on launch
     LaunchedEffect(Unit) {
         isLoadingCatalog = true
-        val remote = fetchRemoteModels()
-        if (remote != null) {
-            // Merge remote models, ensuring local fallbacks are also present and unique by fileName
-            val combined = (fallbackModels + remote).distinctBy { it.fileName }
-            models = combined
+
+        // Step 1: Scan disk IMMEDIATELY with the fallback models so the correct
+        // "Load Model" / "Download" state is visible on the very first frame.
+        downloadedModels = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            fallbackModels.filter { modelDownloader.getDownloadedModelPath(it.fileName) != null }
+                .map { it.name }.toSet()
+        }
+
+        // Step 2: Fetch the remote catalog in the background (this takes a few seconds)
+        val remote = withContext(kotlinx.coroutines.Dispatchers.IO) { fetchRemoteModels() }
+        val combined = if (remote != null) {
+            val merged = (fallbackModels + remote).distinctBy { it.fileName }
             catalogSource = "Remote catalog synced"
+            merged
         } else {
             catalogSource = "Offline — using local catalog"
+            fallbackModels
+        }
+        models = combined
+
+        // Step 3: Rescan disk now that we may have extra models from the remote catalog
+        downloadedModels = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            combined.filter { modelDownloader.getDownloadedModelPath(it.fileName) != null }
+                .map { it.name }.toSet()
         }
         isLoadingCatalog = false
     }
@@ -282,9 +303,16 @@ fun ModelScreen(
                                                         } else {
                                                             downloadProgress[model.fileName] = p
                                                             if (p >= 1.0f) {
+                                                                // Small delay for OS to flush the file
+                                                                kotlinx.coroutines.delay(600)
+                                                                // Rescan disk on IO thread, then refresh UI
+                                                                val freshSet = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                                    models.filter {
+                                                                        modelDownloader.getDownloadedModelPath(it.fileName) != null
+                                                                    }.map { it.name }.toSet()
+                                                                }
+                                                                downloadedModels = freshSet
                                                                 downloadProgress.remove(model.fileName)
-                                                                // Re-check downloaded state after a short delay
-                                                                kotlinx.coroutines.delay(500)
                                                             }
                                                         }
                                                     }

@@ -98,6 +98,48 @@ class ChatViewModel : ViewModel() {
     // Sentinel the LLM is instructed to output when it needs a web search.
     private val SEARCH_SENTINEL = "[SEARCH_NEEDED]"
 
+    private data class ParsedContent(
+        val thoughts: List<String>,
+        val visibleText: String,
+        val raw: String
+    )
+
+    private fun parseStreamContent(raw: String): ParsedContent {
+        val thoughts = mutableListOf<String>()
+        val visibleText = StringBuilder()
+        var currentIdx = 0
+
+        while (currentIdx < raw.length) {
+            val startTagIdx = raw.indexOf("<thought>", currentIdx)
+            if (startTagIdx != -1) {
+                // Add text before the tag to visible content
+                visibleText.append(raw.substring(currentIdx, startTagIdx))
+                
+                val endTagIdx = raw.indexOf("</thought>", startTagIdx + 9)
+                if (endTagIdx != -1) {
+                    val thoughtContent = raw.substring(startTagIdx + 9, endTagIdx).trim()
+                    if (thoughtContent.isNotBlank()) thoughts.add(thoughtContent)
+                    currentIdx = endTagIdx + 10
+                } else {
+                    // Unclosed thought (currently streaming)
+                    val partialThought = raw.substring(startTagIdx + 9).trim()
+                    if (partialThought.isNotBlank()) thoughts.add(partialThought)
+                    currentIdx = raw.length
+                }
+            } else {
+                // No more thought tags, add remainder to visible content
+                visibleText.append(raw.substring(currentIdx))
+                break
+            }
+        }
+
+        var cleanVisible = visibleText.toString().replace(SEARCH_SENTINEL, "")
+        // If it still contains unclosed tags at the very end, don't show them
+        cleanVisible = cleanVisible.replace("<thought>", "").trimStart()
+        
+        return ParsedContent(thoughts, cleanVisible, raw)
+    }
+
     private fun handleToken(token: String, done: Boolean) {
         when (agentPhase) {
             AgentPhase.IDLE -> {
@@ -140,84 +182,88 @@ class ChatViewModel : ViewModel() {
 
                 _uiState.update { state ->
                     val newRaw = state.currentGeneratingRawContent + token
+                    val parsed = parseStreamContent(newRaw)
 
                     // ── Sentinel & Refusal detection ────────────────────────────────
-                    val refusalPhrases =
-                            listOf(
-                                    "I do not have access",
-                                    "I cannot access",
-                                    "I don't have access",
-                                    "as an AI",
-                                    "I am an AI",
-                                    "SEARCH_NEEDED"
-                            )
+                    val refusalPhrases = listOf(
+                        "I do not have access",
+                        "I cannot access",
+                        "I don't have access",
+                        "as an AI",
+                        "I am an AI",
+                        "SEARCH_NEEDED"
+                    )
+                    
+                    // Only trigger search if refusal is detected AND we haven't already searched
                     val isRefusal = refusalPhrases.any { newRaw.contains(it, ignoreCase = true) }
 
                     if (pendingAction == null &&
-                                    (newRaw.contains(SEARCH_SENTINEL) || isRefusal) &&
-                                    state.currentActions.isEmpty()
+                        (newRaw.contains(SEARCH_SENTINEL) || isRefusal) &&
+                        state.currentActions.isEmpty()
                     ) {
                         val query = currentUserQuery
                         agentPhase = AgentPhase.SEARCHING
                         pendingAction = AgentAction("WebSearch", query)
 
                         return@update state.copy(
-                                currentGeneratingRawContent = "", // discard sentinel/refusal
-                                currentGeneratingMessage = "",
-                                currentActions = listOf(AgentAction("WebSearch", query))
+                            currentGeneratingRawContent = "",
+                            currentGeneratingMessage = "",
+                            currentThoughts = emptyList(),
+                            currentActions = listOf(AgentAction("WebSearch", query))
                         )
                     }
 
-                    // ── Extract visible answer text ────────────────────────────────
-                    val displayText = newRaw.replace(SEARCH_SENTINEL, "").trimStart()
+                    // ── Forward visible answer text to TTS ──────────────────────────
+                    val displayText = parsed.visibleText
+                    val currentTtsText = state.currentGeneratingMessage
+                    
+                    val newTtsText = if (displayText.length > currentTtsText.length) {
+                        displayText.substring(currentTtsText.length)
+                    } else ""
 
-                    // Forward only NEW text to TTS
-                    val currentText = state.currentGeneratingMessage
-                    val newTtsText =
-                            if (displayText.length > currentText.length)
-                                    displayText.substring(currentText.length)
-                            else ""
-
-                    if (newTtsText.isNotEmpty()) onNewToken?.invoke(newTtsText, done)
-                    else if (done && displayText.isNotEmpty()) onNewToken?.invoke("", true)
+                    if (newTtsText.isNotEmpty()) {
+                        // Clean markdown for TTS
+                        val cleanTts = newTtsText.replace(Regex("[#*`_~]"), "")
+                        if (cleanTts.isNotBlank()) onNewToken?.invoke(cleanTts, done)
+                    } else if (done && displayText.isNotEmpty()) {
+                        onNewToken?.invoke("", true)
+                    }
 
                     // ── Generation complete ──────────────────────────────────────────
                     if (done) {
                         agentPhase = AgentPhase.IDLE
 
-                        // Trick the LLM into thinking it successfully used the SEARCH_SENTINEL in
-                        // its history!
-                        val finalRawContent =
-                                if (lastSearchResultContext != null) {
-                                    "$SEARCH_SENTINEL<end_of_turn>\n<start_of_turn>user\nI have searched the internet for you. Here are the search results:\n\n$lastSearchResultContext\n<end_of_turn>\n<start_of_turn>model\n$newRaw"
-                                } else newRaw
+                        val finalRawContent = if (lastSearchResultContext != null) {
+                            "$SEARCH_SENTINEL<end_of_turn>\n<start_of_turn>user\nI have searched the internet for you. Here are the search results:\n\n$lastSearchResultContext\n<end_of_turn>\n<start_of_turn>model\n$newRaw"
+                        } else newRaw
+                        
                         lastSearchResultContext = null
 
-                        val finalMsg =
-                                ChatMessage(
-                                        text = displayText,
-                                        isUser = false,
-                                        thoughts = emptyList(),
-                                        actions = state.currentActions,
-                                        rawContent = finalRawContent
-                                )
+                        val finalMsg = ChatMessage(
+                            text = displayText,
+                            isUser = false,
+                            thoughts = parsed.thoughts,
+                            actions = state.currentActions,
+                            rawContent = finalRawContent
+                        )
                         val updatedMessages = state.messages + finalMsg
                         shouldSave = true
                         messagesToSave = updatedMessages
 
                         state.copy(
-                                messages = updatedMessages,
-                                currentGeneratingMessage = "",
-                                currentGeneratingRawContent = "",
-                                currentThoughts = emptyList(),
-                                currentActions = emptyList(),
-                                isGenerating = false
+                            messages = updatedMessages,
+                            currentGeneratingMessage = "",
+                            currentGeneratingRawContent = "",
+                            currentThoughts = emptyList(),
+                            currentActions = emptyList(),
+                            isGenerating = false
                         )
                     } else {
                         state.copy(
-                                currentGeneratingRawContent = newRaw,
-                                currentGeneratingMessage = displayText,
-                                isGenerating = true
+                            currentGeneratingRawContent = newRaw,
+                            currentGeneratingMessage = displayText,
+                            currentThoughts = parsed.thoughts,
+                            isGenerating = true
                         )
                     }
                 }

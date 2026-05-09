@@ -65,12 +65,12 @@ class LlmInferenceManager(private val context: Context) {
             try {
                 conv.sendMessageAsync(prompt)
                     .onStart { /* Handle start? */ }
-                    .onCompletion { _outputFlow.tryEmit("" to true) }
+                    .onCompletion { _outputFlow.emit("" to true) }
                     .collect { chunk ->
-                        _outputFlow.tryEmit(chunk.toString() to false)
+                        _outputFlow.emit(chunk.toString() to false)
                     }
             } catch (e: Exception) {
-                _outputFlow.tryEmit("Error: ${e.message}" to true)
+                _outputFlow.emit("Error: ${e.message}" to true)
             }
         }
     }

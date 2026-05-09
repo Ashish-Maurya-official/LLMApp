@@ -23,6 +23,8 @@ class PiperTtsEngine(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.Default + Job())
     private var audioTrack: AudioTrack? = null
 
+    fun isReady(): Boolean = ortSession != null
+
     init {
         try {
             val modelBytes = context.assets.open("piper.onnx").readBytes()

@@ -172,7 +172,14 @@ class VoiceManager(
             if (remaining.isNotBlank()) {
                 speakSentence(remaining, isLast = true)
             } else {
+                // If we're done and nothing remains, we must ensure we return to listening mode.
+                // We set lastSpokenUtteranceId to the current one so that if a speech task was 
+                // already active, its onDone will trigger the loop. 
+                // If no speech is active, we trigger it manually.
                 lastSpokenUtteranceId = "utt_${utteranceCounter}"
+                if (!isSpeaking && isVoiceModeActive) {
+                    mainHandler.postDelayed({ startListening() }, 400)
+                }
             }
         }
     }
@@ -190,7 +197,7 @@ class VoiceManager(
         if (isLast) lastSpokenUtteranceId = utteranceId
         
         // Try Piper first, fallback to Android TTS
-        if (piperEngine != null) {
+        if (piperEngine != null && piperEngine?.isReady() == true) {
             isSpeaking = true
             onSpeakingStateChanged(true)
             piperEngine?.speak(text) {
@@ -212,12 +219,28 @@ class VoiceManager(
 
     private fun findSentenceBoundary(text: String): Int {
         val endings = listOf(". ", "! ", "? ", ".\n", "!\n", "?\n", ": ")
-        var best = -1
+        val abbreviations = listOf("Mr. ", "Ms. ", "Dr. ", "St. ", "Prof. ", "Inc. ", "Ltd. ")
+        
+        var earliest = Int.MAX_VALUE
+        var found = false
+        
         for (ending in endings) {
-            val idx = text.lastIndexOf(ending)
-            if (idx >= 0) best = maxOf(best, idx + ending.length)
+            var idx = text.indexOf(ending)
+            while (idx >= 0) {
+                val pos = idx + ending.length
+                val segment = text.substring(0, pos)
+                val isAbbreviation = abbreviations.any { segment.endsWith(it) }
+                
+                if (!isAbbreviation) {
+                    earliest = minOf(earliest, pos)
+                    found = true
+                    break // Found earliest for this ending
+                }
+                idx = text.indexOf(ending, idx + 1)
+            }
         }
-        return best
+        
+        return if (found) earliest else -1
     }
 
     fun interrupt() {

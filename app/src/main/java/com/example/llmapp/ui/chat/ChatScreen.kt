@@ -22,7 +22,8 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,6 +45,8 @@ import com.example.llmapp.ui.state.ChatIntent
 import com.example.llmapp.ui.state.ChatUiState
 import com.example.llmapp.ui.state.VoiceState
 import com.example.llmapp.ui.voice.VoiceConversationOverlay
+import com.example.llmapp.ChatMessage
+import com.example.llmapp.AgentAction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,6 +77,11 @@ fun ChatScreen(
             onPartialResult = { partial ->
                 onIntent(ChatIntent.SetPartialTranscript(partial))
             },
+            onInterrupted = {
+                onIntent(ChatIntent.StopGeneration)
+                // Clear partial transcript
+                onIntent(ChatIntent.SetPartialTranscript(""))
+            },
             onSpeakingStateChanged = { speaking ->
                 if (speaking) onIntent(ChatIntent.SetVoiceState(VoiceState.SPEAKING))
                 else if (uiState.isVoiceModeActive) onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
@@ -82,7 +90,8 @@ fun ChatScreen(
                 Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
             },
             speechRate = settingsManager?.ttsSpeechRate ?: 0.95f,
-            voiceName = settingsManager?.ttsVoiceName ?: ""
+            voiceName = settingsManager?.ttsVoiceName ?: "",
+            language = settingsManager?.language ?: "English"
         )
     }
 
@@ -232,16 +241,22 @@ fun ChatScreen(
                     UserMessageBubble(text = msg.text)
                 } else {
                     AssistantMessageBubble(
-                        text = msg.text,
+                        message = msg,
                         onCopy = { clipboardManager.setText(AnnotatedString(msg.text)) }
                     )
                 }
             }
             if (uiState.isGenerating) {
-                if (uiState.currentGeneratingMessage.isNotBlank()) {
+                if (uiState.currentGeneratingRawContent.isNotBlank()) {
                     item {
-                        AssistantMessageBubble(
+                        val genMsg = ChatMessage(
                             text = uiState.currentGeneratingMessage,
+                            isUser = false,
+                            thoughts = uiState.currentThoughts,
+                            actions = uiState.currentActions
+                        )
+                        AssistantMessageBubble(
+                            message = genMsg,
                             onCopy = { clipboardManager.setText(AnnotatedString(uiState.currentGeneratingMessage)) }
                         )
                     }
@@ -448,7 +463,7 @@ fun UserMessageBubble(text: String) {
 }
 
 @Composable
-fun AssistantMessageBubble(text: String, onCopy: () -> Unit) {
+fun AssistantMessageBubble(message: ChatMessage, onCopy: () -> Unit) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Surface(
             shape = RoundedCornerShape(50),
@@ -459,7 +474,60 @@ fun AssistantMessageBubble(text: String, onCopy: () -> Unit) {
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            ParsedMarkdownMessage(text = text)
+            // Render thoughts
+            if (message.thoughts.isNotEmpty()) {
+                var expanded by remember { mutableStateOf(false) }
+                Surface(
+                    onClick = { expanded = !expanded },
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Psychology, contentDescription = "Thinking", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Thinking...", style = MaterialTheme.typography.labelMedium)
+                        }
+                        if (expanded) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            message.thoughts.forEach { thought ->
+                                Text(thought, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Render actions
+            if (message.actions.isNotEmpty()) {
+                message.actions.forEach { action ->
+                    var actionExpanded by remember { mutableStateOf(false) }
+                    Surface(
+                        onClick = { actionExpanded = !actionExpanded },
+                        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Language, contentDescription = "Action", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Searched Web: ${action.query}", style = MaterialTheme.typography.labelMedium)
+                            }
+                            if (actionExpanded && action.uiSources != null) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                ParsedMarkdownMessage(text = action.uiSources)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (message.text.isNotBlank()) {
+                ParsedMarkdownMessage(text = message.text)
+            }
             
             Spacer(modifier = Modifier.height(4.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {

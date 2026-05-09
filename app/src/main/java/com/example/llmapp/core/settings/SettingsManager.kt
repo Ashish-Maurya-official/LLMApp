@@ -19,7 +19,7 @@ class SettingsManager(context: Context) {
         set(value) = prefs.edit().putInt("top_k", value).apply()
         
     var systemPrompt: String
-        get() = prefs.getString("system_prompt", "You are a helpful and concise offline AI assistant.") ?: ""
+        get() = prefs.getString("system_prompt", "You are a helpful offline AI. If the user asks a question requiring the internet, output EXACTLY AND ONLY: SEARCH_ONLINE: [your query here]") ?: ""
         set(value) = prefs.edit().putString("system_prompt", value).apply()
         
     var themePreference: String
@@ -33,4 +33,8 @@ class SettingsManager(context: Context) {
     var ttsSpeechRate: Float
         get() = prefs.getFloat("tts_speech_rate", 0.95f)
         set(value) = prefs.edit().putFloat("tts_speech_rate", value).apply()
+
+    var language: String
+        get() = prefs.getString("language", "English") ?: "English"
+        set(value) = prefs.edit().putString("language", value).apply()
 }

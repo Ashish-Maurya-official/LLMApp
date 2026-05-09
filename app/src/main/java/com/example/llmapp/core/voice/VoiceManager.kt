@@ -10,6 +10,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.media.AudioAttributes
 import java.util.*
 
 /**
@@ -28,13 +29,23 @@ class VoiceManager(
     private val onListeningStateChanged: (Boolean) -> Unit,
     private val onSpeakingStateChanged: (Boolean) -> Unit,
     private val onPartialResult: ((String) -> Unit)? = null,
+    private val onInterrupted: () -> Unit = {},
     private val onError: (String) -> Unit,
     private val speechRate: Float = 0.95f,
-    private val voiceName: String = ""
+    private val voiceName: String = "",
+    private val language: String = "English"
 ) : RecognitionListener, TextToSpeech.OnInitListener {
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var textToSpeech: TextToSpeech? = null
+    
+    private fun getLocaleForLanguage(): Locale {
+        return when (language.lowercase(Locale.getDefault())) {
+            "hindi" -> Locale("hi", "IN")
+            "bhojpuri" -> Locale("bho", "IN")
+            else -> Locale.US
+        }
+    }
 
     // Voice mode loop controls
     var isVoiceModeActive = false
@@ -60,7 +71,13 @@ class VoiceManager(
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            textToSpeech?.language = Locale.US
+            val audioAttributes = AudioAttributes.Builder()
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .build()
+            textToSpeech?.setAudioAttributes(audioAttributes)
+            
+            textToSpeech?.language = getLocaleForLanguage()
             textToSpeech?.setSpeechRate(speechRate)
             textToSpeech?.setPitch(1.0f)
             // Apply saved voice if set
@@ -80,6 +97,9 @@ class VoiceManager(
                 mainHandler.post {
                     isSpeaking = true
                     onSpeakingStateChanged(true)
+                    if (isVoiceModeActive) {
+                        startListening()
+                    }
                 }
             }
 
@@ -109,10 +129,10 @@ class VoiceManager(
     // ─── STT ────────────────────────────────────────────────────────────────
 
     fun startListening() {
-        if (isListening || isSpeaking) return
+        if (isListening) return
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, getLocaleForLanguage())
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
@@ -284,7 +304,16 @@ class VoiceManager(
             ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             ?.firstOrNull()
         if (!partial.isNullOrBlank()) {
-            mainHandler.post { onPartialResult?.invoke(partial) }
+            mainHandler.post { 
+                onPartialResult?.invoke(partial) 
+                // Barge-in logic: if AI is speaking and user says >= 2 words, interrupt!
+                if (isSpeaking && partial.trim().split("\\s+".toRegex()).size >= 2) {
+                    textToSpeech?.stop()
+                    isSpeaking = false
+                    onSpeakingStateChanged(false)
+                    onInterrupted()
+                }
+            }
         }
     }
     override fun onEvent(eventType: Int, params: Bundle?) {}

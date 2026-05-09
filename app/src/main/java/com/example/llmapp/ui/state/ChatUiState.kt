@@ -7,6 +7,9 @@ enum class VoiceState { IDLE, LISTENING, THINKING, SPEAKING }
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val currentGeneratingMessage: String = "",
+    val currentGeneratingRawContent: String = "",
+    val currentThoughts: List<String> = emptyList(),
+    val currentActions: List<com.example.llmapp.AgentAction> = emptyList(),
     val isGenerating: Boolean = false,
     val isLoadingModel: Boolean = false,
     val status: String = "Ready",
@@ -28,5 +31,6 @@ sealed class ChatIntent {
     data class SetVoiceState(val state: VoiceState) : ChatIntent()
     data class SetPartialTranscript(val text: String) : ChatIntent()
     data class DeleteSession(val sessionId: String) : ChatIntent()
+    object StopGeneration : ChatIntent()
 }
 

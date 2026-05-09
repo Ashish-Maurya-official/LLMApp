@@ -31,6 +31,9 @@ fun SettingsScreen(
     var systemPrompt by remember { mutableStateOf(settingsManager.systemPrompt) }
     var ttsSpeechRate by remember { mutableFloatStateOf(settingsManager.ttsSpeechRate) }
     var selectedVoiceName by remember { mutableStateOf(settingsManager.ttsVoiceName) }
+    var language by remember { mutableStateOf(settingsManager.language) }
+    var languageDropdownExpanded by remember { mutableStateOf(false) }
+    val languages = listOf("English", "Hindi", "Bhojpuri")
 
     // Load available TTS voices
     var availableVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
@@ -121,6 +124,39 @@ fun SettingsScreen(
 
             // ─── TTS / Voice ─────────────────────────────────────────────
             SectionHeader("Voice & Speech")
+            
+            Text("Language", style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(4.dp))
+            
+            ExposedDropdownMenuBox(
+                expanded = languageDropdownExpanded,
+                onExpandedChange = { languageDropdownExpanded = !languageDropdownExpanded }
+            ) {
+                OutlinedTextField(
+                    value = language,
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageDropdownExpanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = languageDropdownExpanded,
+                    onDismissRequest = { languageDropdownExpanded = false }
+                ) {
+                    languages.forEach { lang ->
+                        DropdownMenuItem(
+                            text = { Text(lang) },
+                            onClick = {
+                                language = lang
+                                settingsManager.language = lang
+                                languageDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            
+            Spacer(Modifier.height(8.dp))
 
             Text("Speech Rate: ${String.format("%.2f", ttsSpeechRate)}x", style = MaterialTheme.typography.bodyMedium)
             Slider(

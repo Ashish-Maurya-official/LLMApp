@@ -14,6 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.llmapp.core.settings.SettingsManager
+import com.example.llmapp.core.models.ModelManager
+import com.example.llmapp.core.models.LlmModelInfo
+import java.io.File
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -35,6 +38,10 @@ fun SettingsScreen(
     var language by remember { mutableStateOf(settingsManager.language) }
     var languageDropdownExpanded by remember { mutableStateOf(false) }
     val languages = listOf("English", "Hindi", "Bhojpuri")
+    
+    val modelManager = remember { ModelManager(context) }
+    var downloadedModels by remember { mutableStateOf(modelManager.getDownloadedModels()) }
+    var currentModelPath by remember { mutableStateOf(settingsManager.currentModelPath) }
 
     // Load available TTS voices
     var availableVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
@@ -234,6 +241,52 @@ fun SettingsScreen(
                         onClick = { onThemeChanged(theme) },
                         label = { Text(theme) }
                     )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ─── Model Management ────────────────────────────────────────
+            SectionHeader("Model Management")
+            Text("Download and switch between different LLM models. Note: Files are 1GB+.", style = MaterialTheme.typography.bodySmall)
+            
+            Spacer(Modifier.height(8.dp))
+            
+            modelManager.availableModels.forEach { model ->
+                val isDownloaded = downloadedModels.any { it.name == model.fileName }
+                val isSelected = currentModelPath.endsWith(model.fileName)
+                
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(model.name, style = MaterialTheme.typography.titleSmall)
+                                Text(model.description, style = MaterialTheme.typography.bodySmall)
+                                Text("Size: ${model.size}", style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (isDownloaded) {
+                                Button(
+                                    onClick = { 
+                                        val path = modelManager.getModelPath(model.fileName)
+                                        currentModelPath = path
+                                        settingsManager.currentModelPath = path
+                                    },
+                                    enabled = !isSelected
+                                ) {
+                                    Text(if (isSelected) "Active" else "Switch")
+                                }
+                            } else {
+                                OutlinedButton(onClick = { modelManager.downloadModel(model) }) {
+                                    Text("Download")
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

@@ -72,7 +72,7 @@ class WhisperSttEngine(private val context: Context) {
         }
     }
 
-    private val decoder = WhisperDecoder()
+    private val decoder = WhisperDecoder(context)
 
     private fun decodeTokens(tokens: IntArray): String {
         return decoder.decode(tokens)

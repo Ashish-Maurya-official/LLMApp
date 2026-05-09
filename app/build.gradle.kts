@@ -54,6 +54,7 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.1")
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")

@@ -57,4 +57,8 @@ class SettingsManager(context: Context) {
     var userBio: String
         get() = prefs.getString("user_bio", "") ?: ""
         set(value) = prefs.edit().putString("user_bio", value).apply()
+
+    var currentModelPath: String
+        get() = prefs.getString("current_model_path", "") ?: ""
+        set(value) = prefs.edit().putString("current_model_path", value).apply()
 }

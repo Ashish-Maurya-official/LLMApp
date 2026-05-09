@@ -31,9 +31,10 @@ class VoiceManager(
 
     private var textToSpeech: TextToSpeech? = null
     
-    // Custom STT Components
+    // Custom Voice Components
     private var rawAudioRecorder: RawAudioRecorder? = null
     private var whisperEngine: WhisperSttEngine? = null
+    private var piperEngine: PiperTtsEngine? = null
     private val audioBuffer = mutableListOf<Short>()
     private val sttScope = CoroutineScope(Dispatchers.Main + Job())
 
@@ -59,6 +60,7 @@ class VoiceManager(
 
     init {
         whisperEngine = WhisperSttEngine(context)
+        piperEngine = PiperTtsEngine(context)
         rawAudioRecorder = RawAudioRecorder(
             onAudioData = { data -> audioBuffer.addAll(data.toList()) },
             onSilenceDetected = { 
@@ -186,7 +188,26 @@ class VoiceManager(
         utteranceCounter++
         val utteranceId = "utt_$utteranceCounter"
         if (isLast) lastSpokenUtteranceId = utteranceId
-        textToSpeech?.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
+        
+        // Try Piper first, fallback to Android TTS
+        if (piperEngine != null) {
+            isSpeaking = true
+            onSpeakingStateChanged(true)
+            piperEngine?.speak(text) {
+                // Manual onDone callback for Piper
+                mainHandler.post {
+                    if (isLast && generationDone) {
+                        isSpeaking = false
+                        onSpeakingStateChanged(false)
+                        if (isVoiceModeActive) {
+                            mainHandler.postDelayed({ startListening() }, 400)
+                        }
+                    }
+                }
+            }
+        } else {
+            textToSpeech?.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
+        }
     }
 
     private fun findSentenceBoundary(text: String): Int {

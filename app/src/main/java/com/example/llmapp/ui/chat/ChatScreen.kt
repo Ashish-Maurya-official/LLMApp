@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -60,6 +61,17 @@ fun ChatScreen(
     settingsManager: com.example.llmapp.core.settings.SettingsManager? = null
 ) {
     var inputText by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    
+    // Automatically scroll to the bottom when messages change or during generation
+    LaunchedEffect(uiState.messages.size, uiState.currentGeneratingMessage, uiState.isGenerating) {
+        if (uiState.messages.isNotEmpty() || uiState.isGenerating) {
+            val totalItems = uiState.messages.size + (if (uiState.isGenerating) 1 else 0)
+            if (totalItems > 0) {
+                listState.animateScrollToItem(totalItems - 1)
+            }
+        }
+    }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     var isListening by remember { mutableStateOf(false) }
@@ -244,6 +256,7 @@ fun ChatScreen(
         }
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)

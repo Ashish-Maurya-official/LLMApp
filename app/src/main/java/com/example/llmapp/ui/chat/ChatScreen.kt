@@ -321,17 +321,6 @@ fun ChatScreen(
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    // Live Voice Mode button
-                    IconButton(onClick = { 
-                        focusManager.clearFocus()
-                        startVoiceMode() 
-                    }) {
-                        Icon(
-                            Icons.Default.Mic,
-                            contentDescription = "Live Voice Mode",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
                 }
             )
         }

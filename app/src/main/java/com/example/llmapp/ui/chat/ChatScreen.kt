@@ -6,12 +6,22 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -32,6 +42,9 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -45,6 +58,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalDensity
 import android.view.HapticFeedbackConstants
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -75,7 +90,16 @@ fun ChatScreen(
     settingsManager: com.example.llmapp.core.settings.SettingsManager? = null
 ) {
     var inputText by remember { mutableStateOf("") }
+    var isInputFocused by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val focusManager = LocalFocusManager.current
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+
+    LaunchedEffect(isImeVisible) {
+        if (!isImeVisible && isInputFocused) {
+            focusManager.clearFocus()
+        }
+    }
 
     var autoScrollEnabled by remember { mutableStateOf(true) }
 
@@ -215,11 +239,17 @@ fun ChatScreen(
     }
 
     Scaffold(
+        modifier = Modifier.pointerInput(Unit) {
+            detectTapGestures(onTap = { focusManager.clearFocus() })
+        },
         topBar = {
             TopAppBar(
                 title = { Text("Chat") },
                 navigationIcon = {
-                    IconButton(onClick = openDrawer) {
+                    IconButton(onClick = { 
+                        focusManager.clearFocus()
+                        openDrawer() 
+                    }) {
                         Icon(Icons.Default.Menu, contentDescription = "Menu")
                     }
                 },
@@ -234,7 +264,10 @@ fun ChatScreen(
                             color = MaterialTheme.colorScheme.secondaryContainer,
                             modifier = Modifier
                                 .padding(end = 8.dp)
-                                .clickable { backendExpanded = true }
+                                .clickable { 
+                                    focusManager.clearFocus()
+                                    backendExpanded = true 
+                                }
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -277,7 +310,10 @@ fun ChatScreen(
                     }
 
                     // New Chat button
-                    IconButton(onClick = { onIntent(ChatIntent.ClearHistory) }) {
+                    IconButton(onClick = { 
+                        focusManager.clearFocus()
+                        onIntent(ChatIntent.ClearHistory) 
+                    }) {
                         Icon(
                             Icons.Default.Edit,
                             contentDescription = "New Chat",
@@ -285,7 +321,10 @@ fun ChatScreen(
                         )
                     }
                     // Live Voice Mode button
-                    IconButton(onClick = { startVoiceMode() }) {
+                    IconButton(onClick = { 
+                        focusManager.clearFocus()
+                        startVoiceMode() 
+                    }) {
                         Icon(
                             Icons.Default.Mic,
                             contentDescription = "Live Voice Mode",
@@ -296,7 +335,7 @@ fun ChatScreen(
             )
         }
     ) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding).imePadding()) {
             Column(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
             if (uiState.errorMessage != null) {
             Surface(
@@ -381,121 +420,206 @@ fun ChatScreen(
             item(key = "bottom_anchor") { Spacer(Modifier.height(1.dp)) }
         }
 
+        // Animate bottom padding to lift input box above keyboard
+        val inputBottomPadding by animateDpAsState(
+            targetValue = if (isImeVisible) 24.dp else 12.dp
+        )
+
         // Input Area
-        Surface(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-            tonalElevation = 0.dp,
-            shadowElevation = 0.dp
+                .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = inputBottomPadding),
+            verticalAlignment = Alignment.Bottom
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.Bottom
+            AnimatedVisibility(
+                visible = isInputFocused,
+                enter = expandHorizontally() + fadeIn(),
+                exit = shrinkHorizontally() + fadeOut()
             ) {
-                IconButton(onClick = { }, modifier = Modifier.padding(bottom = 4.dp)) {
-                    Icon(Icons.Default.Add, contentDescription = "Add Attachment", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Surface(
+                    onClick = { focusManager.clearFocus() },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                    modifier = Modifier.padding(end = 8.dp).size(44.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Attachment", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                    }
                 }
+            }
 
-                TextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
+            Surface(
+                modifier = Modifier.weight(1f).defaultMinSize(minHeight = 44.dp),
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp
+            ) {
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .padding(bottom = 2.dp),
-                    placeholder = {
-                        Text(
-                            "Message AI...",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        disabledContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        disabledIndicatorColor = Color.Transparent,
-                        cursorColor = MaterialTheme.colorScheme.primary
-                    ),
-                    textStyle = LocalTextStyle.current.copy(
-                        fontSize = 16.sp,
-                        lineHeight = 22.sp
-                    ),
-                    minLines = 1,
-                    maxLines = 8,
-                    enabled = !uiState.isGenerating
-                )
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                val sendBtnColor by animateColorAsState(
-                    targetValue = if (inputText.isNotBlank() && !uiState.isGenerating) 
-                        MaterialTheme.colorScheme.primary 
-                    else 
-                        MaterialTheme.colorScheme.surfaceVariant
-                )
-                val sendIconColor by animateColorAsState(
-                    targetValue = if (inputText.isNotBlank() && !uiState.isGenerating) 
-                        MaterialTheme.colorScheme.onPrimary 
-                    else 
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                if (isListening) {
-                    IconButton(
-                        onClick = { voiceManager.stopListening() },
-                        modifier = Modifier
-                            .size(42.dp)
-                            .background(MaterialTheme.colorScheme.error, CircleShape)
+                        .fillMaxWidth()
+                        .padding(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AnimatedVisibility(
+                        visible = !isInputFocused,
+                        enter = expandHorizontally() + fadeIn(),
+                        exit = shrinkHorizontally() + fadeOut()
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Mic,
-                            contentDescription = "Stop Listening",
-                            tint = MaterialTheme.colorScheme.onError
-                        )
-                    }
-                } else if (inputText.isNotBlank() && !uiState.isGenerating) {
-                    IconButton(
-                        onClick = {
-                            onIntent(ChatIntent.SendMessage(inputText))
-                            inputText = ""
-                            autoScrollEnabled = true
-                        },
-                        modifier = Modifier
-                            .size(42.dp)
-                            .background(sendBtnColor, CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send",
-                            tint = sendIconColor
-                        )
-                    }
-                } else {
-                    // Tap mic icon in input field → simple one-shot voice input (not live mode)
-                    IconButton(
-                        onClick = {
-                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                voiceManager.startListening()
-                            } else {
-                                requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        Surface(
+                            onClick = { focusManager.clearFocus() },
+                            modifier = Modifier.size(32.dp),
+                            shape = CircleShape,
+                            color = Color.Transparent
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Add, contentDescription = "Add Attachment", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
                             }
-                        },
+                        }
+                    }
+
+                    BasicTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
                         modifier = Modifier
-                            .size(42.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Mic,
-                            contentDescription = "Voice Input",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                            .weight(1f)
+                            .padding(horizontal = 6.dp, vertical = 6.dp)
+                            .onFocusChanged { isInputFocused = it.isFocused },
+                        textStyle = LocalTextStyle.current.copy(
+                            fontSize = 15.sp,
+                            lineHeight = 20.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        minLines = 1,
+                        maxLines = 8,
+                        enabled = !uiState.isGenerating,
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { innerTextField ->
+                            Box(contentAlignment = Alignment.CenterStart) {
+                                if (inputText.isBlank()) {
+                                    Text(
+                                        "Message AI...",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 15.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+
+                    // Removed spacer since TextField now has horizontal padding
+
+                    val sendBtnColor by animateColorAsState(
+                        targetValue = if (inputText.isNotBlank() && !uiState.isGenerating) 
+                            MaterialTheme.colorScheme.primary 
+                        else 
+                            MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    val sendIconColor by animateColorAsState(
+                        targetValue = if (inputText.isNotBlank() && !uiState.isGenerating) 
+                            MaterialTheme.colorScheme.onPrimary 
+                        else 
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (isListening) {
+                        Surface(
+                            onClick = { 
+                                focusManager.clearFocus()
+                                voiceManager.stopListening() 
+                            },
+                            modifier = Modifier.size(32.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.error
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = "Stop Listening",
+                                    tint = MaterialTheme.colorScheme.onError,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    } else if (uiState.isGenerating) {
+                        Surface(
+                            onClick = { 
+                                focusManager.clearFocus()
+                                onIntent(ChatIntent.StopGeneration) 
+                            },
+                            modifier = Modifier.size(32.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.errorContainer
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Stop,
+                                    contentDescription = "Stop Generation",
+                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    } else if (inputText.isNotBlank()) {
+                        Surface(
+                            onClick = {
+                                focusManager.clearFocus()
+                                onIntent(ChatIntent.SendMessage(inputText))
+                                inputText = ""
+                                autoScrollEnabled = true
+                            },
+                            modifier = Modifier.size(32.dp),
+                            shape = CircleShape,
+                            color = sendBtnColor
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = "Send",
+                                    tint = sendIconColor,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        // Empty text, show Mic and Live buttons
+                        Surface(
+                            onClick = {
+                                focusManager.clearFocus()
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                    voiceManager.startListening()
+                                } else {
+                                    requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
+                            modifier = Modifier.size(32.dp),
+                            shape = CircleShape,
+                            color = Color.Transparent
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Mic, contentDescription = "Voice Input", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        Surface(
+                            onClick = { 
+                                focusManager.clearFocus()
+                                onIntent(ChatIntent.ActivateVoiceMode) 
+                            },
+                            modifier = Modifier.size(32.dp),
+                            shape = CircleShape,
+                            color = Color.White
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Headphones, contentDescription = "Live Voice", tint = Color.Black, modifier = Modifier.size(20.dp))
+                            }
+                        }
                     }
                 }
             }

@@ -86,15 +86,19 @@ private fun parseStreamingSegments(text: String): List<StreamingSegment> {
 }
 
 /**
- * Agent state machine states: IDLE – not running GENERATING – LLM is streaming tokens (initial or
- * synthesis) SEARCHING – LLM is still draining its first stream, search is running
- * WAITING_FOR_SEARCH – LLM engine is idle/done, but search is still running RESUMING –
- * deprecated/bridge state
+ * Agent state machine states:
+ *  IDLE              – not running
+ *  GENERATING        – LLM is streaming a response (initial attempt or final synthesis)
+ *  SEARCHING         – first LLM stream is draining after sentinel was detected
+ *  GENERATING_QUERY  – LLM is generating an optimised web search query
+ *  WAITING_FOR_SEARCH – query generated, web search running, waiting for results
+ *  RESUMING          – deprecated bridge state
  */
 private enum class AgentPhase {
     IDLE,
     GENERATING,
     SEARCHING,
+    GENERATING_QUERY,
     WAITING_FOR_SEARCH,
     RESUMING
 }
@@ -158,8 +162,17 @@ class ChatViewModel : ViewModel() {
     // Store the context so we can attach it to the final message's history
     @Volatile private var lastSearchResultContext: String? = null
 
-    // The original user query — kept so we can use it as the search query
+    // The original user query — kept so we can use it for search if needed
     @Volatile private var currentUserQuery: String = ""
+
+    /** Accumulates tokens during the GENERATING_QUERY phase. */
+    private val queryGenBuffer = StringBuilder()
+
+    /**
+     * Fix 7: Explicit guard — prevents re-triggering web search during the synthesis
+     * phase of the same turn. Reset to false on each new user message.
+     */
+    @Volatile private var searchPerformedThisTurn = false
 
     /** Callback for VoiceManager – only visible text is forwarded. */
     var onNewToken: ((token: String, done: Boolean) -> Unit)? = null
@@ -239,28 +252,54 @@ class ChatViewModel : ViewModel() {
                 /* ignore overlapping old stream */
             }
             AgentPhase.SEARCHING -> {
-                // LLM engine is draining its first stream (the one that output sentinel).
-                // We must wait for done=true before we can safely start a new generation.
+                // LLM engine is draining the first stream (the one that output the sentinel).
+                // Wait for done=true, then ask the LLM to generate an optimised search query.
                 if (done) {
-                    val result = pendingSearchResult
-                    if (result != null) {
-                        // Search already finished! We can start synthesis immediately.
-                        agentPhase = AgentPhase.GENERATING
-                        pendingSearchResult = null
-                        val prompt = buildPromptWithContext(currentUserQuery, result.llmText)
-                        try {
-                            llmInferenceManager?.generateResponseAsync(prompt)
-                        } catch (e: Exception) {
-                            agentPhase = AgentPhase.IDLE
-                            _uiState.update {
-                                it.copy(isGenerating = false, errorMessage = e.message)
-                            }
-                        }
-                    } else {
-                        // Search still running. Switch to waiting state.
-                        // storeObservation will trigger synthesis when the search results arrive.
-                        agentPhase = AgentPhase.WAITING_FOR_SEARCH
+                    agentPhase = AgentPhase.GENERATING_QUERY
+                    queryGenBuffer.clear()
+                    val queryPrompt = buildQueryGenerationPrompt(currentUserQuery)
+                    try {
+                        llmInferenceManager?.generateResponseAsync(queryPrompt)
+                    } catch (e: Exception) {
+                        agentPhase = AgentPhase.IDLE
+                        _uiState.update { it.copy(isGenerating = false, errorMessage = e.message) }
                     }
+                }
+            }
+            AgentPhase.GENERATING_QUERY -> {
+                // Silently collect the LLM's optimised query (not shown in UI).
+                queryGenBuffer.append(token)
+                if (done) {
+                    // Clean up: take first non-blank line, strip quotes, cap length
+                    val rawQuery = queryGenBuffer.toString()
+                    val optimizedQuery = rawQuery
+                        .lines()
+                        // Skip blank lines and any line that still has placeholder brackets
+                        .firstOrNull { line ->
+                            line.isNotBlank() && !line.contains("[") && !line.contains("]")
+                        }
+                        ?.trim()
+                        // Strip a leading "Query:" prefix if the LLM echoed the prompt format
+                        ?.removePrefix("Query:")
+                        ?.trim()
+                        // Strip surrounding quotes
+                        ?.removeSurrounding("\"")
+                        ?.removeSurrounding("'")
+                        ?.take(250)
+                        // Fallback to user's original question if parsing fails
+                        ?: currentUserQuery
+
+                    // Update the displayed search action with the LLM-generated query
+                    val currentActions = _streamingState.value.actions.toMutableList()
+                    if (currentActions.isNotEmpty()) {
+                        currentActions[currentActions.lastIndex] =
+                            currentActions.last().copy(query = optimizedQuery)
+                    }
+                    _streamingState.value = _streamingState.value.copy(actions = currentActions)
+
+                    // Now kick off the web search with the optimised query
+                    agentPhase = AgentPhase.WAITING_FOR_SEARCH
+                    performWebSearch(optimizedQuery)
                 }
             }
             AgentPhase.WAITING_FOR_SEARCH -> {
@@ -275,24 +314,30 @@ class ChatViewModel : ViewModel() {
                     val parsed = parseStreamContent(newRaw)
 
                     // ── Sentinel & Refusal detection ────────────────────────────────
+                    // Fix 1: Removed broad phrases ("as an AI", "I am an AI") that caused
+                    // false-positive search triggers on perfectly answerable responses.
+                    // Only catch genuine internet-access refusals now.
                     val refusalPhrases = listOf(
-                        "I do not have access",
-                        "I cannot access",
-                        "I don't have access",
-                        "as an AI",
-                        "I am an AI",
+                        "I do not have access to the internet",
+                        "I cannot access the internet",
+                        "I don't have access to the internet",
+                        "I cannot browse",
+                        "I don't have real-time",
+                        "I do not have real-time",
                         "SEARCH_NEEDED"
                     )
-                    
-                    // Only trigger search if refusal is detected AND we haven't already searched
+
                     val isRefusal = refusalPhrases.any { newRaw.contains(it, ignoreCase = true) }
 
-                    if (pendingAction == null &&
+                    // Fix 7: Never re-trigger search if we already searched this turn
+                    if (!searchPerformedThisTurn &&
+                        pendingAction == null &&
                         (newRaw.contains(SEARCH_SENTINEL) || isRefusal) &&
                         _streamingState.value.actions.isEmpty()
                     ) {
                         val query = currentUserQuery
                         agentPhase = AgentPhase.SEARCHING
+                        searchPerformedThisTurn = true  // Fix 7: block re-trigger for rest of this turn
                         pendingAction = AgentAction("WebSearch", query)
                         val searchAction = AgentAction("WebSearch", query)
 
@@ -371,11 +416,9 @@ class ChatViewModel : ViewModel() {
                         refreshSessions()
                     }
                 }
-
-                if (agentPhase == AgentPhase.SEARCHING) {
-                    val action = pendingAction
-                    if (action != null) performWebSearch(action.query)
-                }
+                // NOTE: We no longer trigger performWebSearch here.
+                // The search is now started from the GENERATING_QUERY done handler
+                // after the LLM generates an optimised search query.
             }
         }
     }
@@ -497,6 +540,8 @@ class ChatViewModel : ViewModel() {
                     agentPhase = AgentPhase.IDLE
                     pendingAction = null
                     pendingSearchResult = null
+                    searchPerformedThisTurn = false
+                    queryGenBuffer.clear()
                     _streamingState.value = StreamingState()
                     _uiState.update {
                         it.copy(
@@ -515,6 +560,7 @@ class ChatViewModel : ViewModel() {
         agentPhase = AgentPhase.GENERATING
         pendingAction = null
         pendingSearchResult = null
+        searchPerformedThisTurn = false  // Fix 7: reset for each new user turn
         currentUserQuery = text
 
         val userMessage = ChatMessage(text = text, isUser = true)
@@ -562,8 +608,6 @@ class ChatViewModel : ViewModel() {
         val messagesToInclude = history.dropLast(1).takeLast(limit)
 
         for (msg in messagesToInclude) {
-            // Use display text only to keep token count predictable.
-            // Cap is derived from the maxTokens setting in Settings.
             val content = msg.text.take(msgCap)
             if (content.isBlank()) continue
             if (msg.isUser) sb.append("<start_of_turn>user\n$content<end_of_turn>\n")
@@ -571,15 +615,24 @@ class ChatViewModel : ViewModel() {
         }
 
         sb.append("<start_of_turn>user\n")
-        sb.append("I have searched the internet for you. Here are the search results:\n\n")
-        sb.append(searchContext)
-        sb.append("\n\nINSTRUCTIONS:\n")
-        sb.append("1. Use the search results above to answer the user's question accurately.\n")
-        sb.append("2. Answer naturally and conversationally.\n")
-        sb.append(
-                "3. Do NOT output the [SEARCH_NEEDED] token now, as the search is already complete.\n"
-        )
-        sb.append("\nUser Question: $userText")
+        sb.append("The following are raw web search results retrieved to help answer the user's question.\n")
+        sb.append("The USER CANNOT SEE these search results — only your final reply is shown to them.\n\n")
+        sb.append("=== SEARCH RESULTS START ===\n")
+        // Fix 2: Cap searchContext so it never overflows the model's context window.
+        // Budget: maxTokens * 3 chars (~75% of output budget as search context budget).
+        val searchContextCap = (settingsManager?.maxTokens ?: 1024) * 3
+        sb.append(searchContext.take(searchContextCap))
+        sb.append("\n=== SEARCH RESULTS END ===\n\n")
+        sb.append("USER'S QUESTION: $userText\n\n")
+        sb.append("YOUR TASK — synthesise a helpful answer following these rules:\n")
+        sb.append("1. READ the search results carefully and EXTRACT only the information that directly answers the user's question.\n")
+        sb.append("2. PRESENT the answer directly to the user in clear, natural language — do NOT mention 'search results', 'the data above', or 'according to the results'.\n")
+        sb.append("3. If the results contain specific facts (numbers, dates, names, prices, scores), include them accurately.\n")
+        sb.append("4. If multiple sources agree, state the fact confidently. If they disagree, note the range.\n")
+        sb.append("5. Keep the answer concise and relevant. Do NOT dump all the search text — extract only what matters.\n")
+        sb.append("6. If the search results do not contain enough information to answer the question, say so honestly and share what you do know.\n")
+        sb.append("7. Do NOT output the [SEARCH_NEEDED] token — the search is already complete.\n")
+        sb.append("8. Format your response using Markdown for clarity (bold key facts, use lists if needed).\n")
         sb.append("<end_of_turn>\n")
         sb.append("<start_of_turn>model\n")
 
@@ -592,20 +645,94 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
+     * Builds a minimal prompt that asks the LLM to produce a single ready-to-use web
+     * search query for [userQuestion].
+     *
+     * Injects user profile data and the last 3 conversation turns so the LLM can
+     * substitute vague references ("my city", "near me", "today") with concrete values
+     * instead of outputting unhelpful placeholders like [Your Location].
+     */
+    private fun buildQueryGenerationPrompt(userQuestion: String): String {
+        val mgr = settingsManager
+        // Gather profile fields that are actually set
+        val profileParts = buildList {
+            mgr?.userName?.takeIf { it.isNotBlank() }?.let { add("Name: $it") }
+            mgr?.userLocation?.takeIf { it.isNotBlank() }?.let { add("Location: $it") }
+            mgr?.userDob?.takeIf { it.isNotBlank() }?.let { add("Date of Birth: $it") }
+            mgr?.userBio?.takeIf { it.isNotBlank() }?.let { add("Bio: $it") }
+        }
+
+        // Recent conversation context (last 3 turns) to resolve references like "it", "that"
+        val recentHistory = _uiState.value.messages
+            .takeLast(6)  // last 3 user+assistant pairs
+            .joinToString("\n") { msg ->
+                val role = if (msg.isUser) "User" else "Assistant"
+                "$role: ${msg.text.take(300)}"
+            }
+
+        return buildString {
+            append("<start_of_turn>user\n")
+            append("Your task: convert the user's question into a single, literal, ready-to-paste web search query.\n\n")
+
+            if (profileParts.isNotEmpty()) {
+                append("USER PROFILE (use this to fill in any personal or location-specific details):\n")
+                profileParts.forEach { append("- $it\n") }
+                append("\n")
+            }
+
+            if (recentHistory.isNotBlank()) {
+                append("RECENT CONVERSATION (use this to resolve pronouns like 'it', 'that', 'there'):\n")
+                append(recentHistory)
+                append("\n\n")
+            }
+
+            append("STRICT RULES:\n")
+            append("1. Output ONLY the search query. Nothing else — no explanation, no intro sentence.\n")
+            append("2. The query MUST be concrete and literal.\n")
+            append("   - If the user asks about their location, use their actual location from the profile.\n")
+            append("   - If the user references something from recent conversation, include it explicitly.\n")
+            append("   - NEVER output placeholders like [city], [your location], [date], [name].\n")
+            append("3. Do NOT wrap the query in quotes.\n")
+            append("4. Keep it under 10 words.\n\n")
+
+            append("EXAMPLES:\n")
+            append("Profile Location: Mumbai | Question: What's the weather like today?\n")
+            append("Query: Mumbai weather today\n\n")
+            append("Profile Location: Delhi | Question: Best restaurants near me?\n")
+            append("Query: best restaurants in Delhi 2025\n\n")
+            append("Question: What are the latest IPL scores?\n")
+            append("Query: IPL 2025 latest match scores today\n\n")
+            append("Question: Who won the US election?\n")
+            append("Query: US election 2024 winner results\n\n")
+            append("Question: What is the price of Bitcoin right now?\n")
+            append("Query: Bitcoin price USD live\n\n")
+            append("Now generate the query for this question:\n")
+            append("Question: $userQuestion\n")
+            append("Query:")
+            append("<end_of_turn>\n")
+            append("<start_of_turn>model\n")
+        }
+    }
+
+    /**
      * Returns a safe per-message character cap based on the user's maxTokens setting.
      *
-     * Reasoning:
-     *  - ~4 chars per token (English average).
-     *  - We reserve 50% of the total token budget for the fixed overhead
-     *    (system prompt, few-shots, current user message).
-     *  - The other 50% is split equally across the context history messages.
-     *  - Result is clamped to [400, 8000] chars to guard against extreme settings.
+     * Fix 4+6: Old formula used 50% of maxTokens with no overhead accounting,
+     * resulting in only ~51 tokens per message (barely a sentence).
+     *
+     * New formula:
+     *  - Fixed overhead (system prompt + sentinel rules + 3 few-shots) ≈ 420 tokens = 1680 chars
+     *  - Total context budget ≈ maxTokens * 4 chars (conservative: assumes context window = 4x output)
+     *  - Available for history = total - overhead, divided by number of messages
+     *  - Clamped to [400, 8000] chars as safety bounds
      */
     private fun perMessageCharCap(): Int {
         val maxTokens = settingsManager?.maxTokens ?: 1024
         val contextLimit = (settingsManager?.contextLimit ?: 10).coerceAtLeast(1)
-        // 4 chars/token, half the budget for history, divided by number of messages
-        val cap = (maxTokens * 4 / 2) / contextLimit
+        val FIXED_OVERHEAD_CHARS = 1680 // ~420 tokens of system/sentinel/few-shot boilerplate
+        val totalBudgetChars = maxTokens * 4
+        val availableForHistory = (totalBudgetChars - FIXED_OVERHEAD_CHARS).coerceAtLeast(400)
+        val cap = availableForHistory / contextLimit
         return cap.coerceIn(400, 8000)
     }
 

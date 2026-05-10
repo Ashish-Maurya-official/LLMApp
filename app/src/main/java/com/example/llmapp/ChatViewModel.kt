@@ -103,6 +103,14 @@ class ChatViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
+    /** Maximum messages kept in RAM for the UI. Older messages are evicted;
+     *  full history is always preserved on disk. */
+    private val MAX_MESSAGES_IN_RAM = 200
+
+    /** Full, unbounded message list — used ONLY for saving to disk.
+     *  The UI always reads the RAM-capped _uiState.messages. */
+    private val allMessages = mutableListOf<ChatMessage>()
+
     // ── Isolated high-frequency streaming state ───────────────────────────────
     // Only the live generating bubble subscribes to this, so the stable
     // message list never recomposes during token streaming.
@@ -331,9 +339,10 @@ class ChatViewModel : ViewModel() {
                             actions = currentStreaming.actions,
                             rawContent = finalRawContent
                         )
-                        val updatedMessages = state.messages + finalMsg
+                        val updatedMessages = (state.messages + finalMsg).takeLast(MAX_MESSAGES_IN_RAM)
+                        allMessages.add(finalMsg) // always append to full list for saving
                         shouldSave = true
-                        messagesToSave = updatedMessages
+                        messagesToSave = allMessages.toList()
 
                         // Reset streaming state first so bubble disappears atomically
                         _streamingState.value = StreamingState()
@@ -416,6 +425,7 @@ class ChatViewModel : ViewModel() {
             is ChatIntent.SendMessage -> handleSendMessage(intent.text)
             is ChatIntent.ClearHistory -> {
                 _uiState.update { it.copy(messages = emptyList()) }
+                allMessages.clear()
                 currentSessionId = System.currentTimeMillis().toString()
             }
             is ChatIntent.LoadModel -> {
@@ -446,7 +456,10 @@ class ChatViewModel : ViewModel() {
                         historyManager?.loadSession(intent.sessionId) ?: emptyList()
                     }
                     currentSessionId = intent.sessionId
-                    _uiState.update { it.copy(messages = messages, errorMessage = null) }
+                    allMessages.clear()
+                    allMessages.addAll(messages)
+                    // Show only last MAX_MESSAGES_IN_RAM in the UI
+                    _uiState.update { it.copy(messages = messages.takeLast(MAX_MESSAGES_IN_RAM), errorMessage = null) }
                 }
             }
             is ChatIntent.ActivateVoiceMode -> {
@@ -505,10 +518,11 @@ class ChatViewModel : ViewModel() {
         currentUserQuery = text
 
         val userMessage = ChatMessage(text = text, isUser = true)
+        allMessages.add(userMessage) // track in full list
         _streamingState.value = StreamingState() // reset before new generation
         _uiState.update { state ->
             state.copy(
-                    messages = state.messages + listOf(userMessage),
+                    messages = (state.messages + listOf(userMessage)).takeLast(MAX_MESSAGES_IN_RAM),
                     isGenerating = true,
                     errorMessage = null
             )
@@ -544,10 +558,13 @@ class ChatViewModel : ViewModel() {
         sb.append("<start_of_turn>model\nSure, I am ready to help!<end_of_turn>\n")
 
         val limit = settingsManager?.contextLimit ?: 10
+        val msgCap = perMessageCharCap()
         val messagesToInclude = history.dropLast(1).takeLast(limit)
 
         for (msg in messagesToInclude) {
-            val content = if (msg.rawContent.isNotBlank()) msg.rawContent else msg.text
+            // Use display text only to keep token count predictable.
+            // Cap is derived from the maxTokens setting in Settings.
+            val content = msg.text.take(msgCap)
             if (content.isBlank()) continue
             if (msg.isUser) sb.append("<start_of_turn>user\n$content<end_of_turn>\n")
             else sb.append("<start_of_turn>model\n$content<end_of_turn>\n")
@@ -572,6 +589,24 @@ class ChatViewModel : ViewModel() {
     private fun buildPromptForMessage(userText: String): String {
         val history = _uiState.value.messages
         return buildPromptFromHistory(history, userText)
+    }
+
+    /**
+     * Returns a safe per-message character cap based on the user's maxTokens setting.
+     *
+     * Reasoning:
+     *  - ~4 chars per token (English average).
+     *  - We reserve 50% of the total token budget for the fixed overhead
+     *    (system prompt, few-shots, current user message).
+     *  - The other 50% is split equally across the context history messages.
+     *  - Result is clamped to [400, 8000] chars to guard against extreme settings.
+     */
+    private fun perMessageCharCap(): Int {
+        val maxTokens = settingsManager?.maxTokens ?: 1024
+        val contextLimit = (settingsManager?.contextLimit ?: 10).coerceAtLeast(1)
+        // 4 chars/token, half the budget for history, divided by number of messages
+        val cap = (maxTokens * 4 / 2) / contextLimit
+        return cap.coerceIn(400, 8000)
     }
 
     fun updateTheme(theme: String) {
@@ -663,10 +698,13 @@ class ChatViewModel : ViewModel() {
         sb.append("<start_of_turn>model\n$SEARCH_SENTINEL<end_of_turn>\n")
 
         val limit = settingsManager?.contextLimit ?: 10
+        val msgCap = perMessageCharCap()
         val historyToInclude = messages.dropLast(1).takeLast(limit)
 
         for (msg in historyToInclude) {
-            val contentToUse = if (msg.rawContent.isNotBlank()) msg.rawContent else msg.text
+            // Use display text only — rawContent can contain full web search results.
+            // Cap is derived dynamically from the maxTokens setting in Settings.
+            val contentToUse = msg.text.take(msgCap)
             if (contentToUse.isBlank()) continue
             if (msg.isUser) sb.append("<start_of_turn>user\n${contentToUse}<end_of_turn>\n")
             else sb.append("<start_of_turn>model\n${contentToUse}<end_of_turn>\n")

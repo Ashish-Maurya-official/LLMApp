@@ -58,19 +58,48 @@ class LlmInferenceManager(private val context: Context) {
         return backendName
     }
 
+    /**
+     * Resets the Conversation's internal KV-cache by creating a fresh Conversation
+     * from the existing Engine. This MUST be called before every generation when
+     * using a full-history reconstructed prompt, otherwise the KV-cache doubles the
+     * conversation every turn, overflowing the context window after ~5 messages.
+     */
+    fun resetConversation() {
+        val eng = engine ?: return
+        conversation?.close()
+        conversation = eng.createConversation()
+    }
+
     fun generateResponseAsync(prompt: String) {
-        val conv = conversation ?: throw IllegalStateException("Model/Conversation not initialized")
-        
+        resetConversation()
+        val freshConv = conversation ?: run {
+            scope.launch { _outputFlow.emit("Error: Model not initialized" to true) }
+            return
+        }
+
         scope.launch {
+            var completionEmitted = false
             try {
-                conv.sendMessageAsync(prompt)
-                    .onStart { /* Handle start? */ }
-                    .onCompletion { _outputFlow.emit("" to true) }
+                freshConv.sendMessageAsync(prompt)
+                    .onCompletion {
+                        // Guard against double-emit if catch block already fired
+                        if (!completionEmitted) {
+                            completionEmitted = true
+                            _outputFlow.emit("" to true)
+                        }
+                    }
                     .collect { chunk ->
                         _outputFlow.emit(chunk.toString() to false)
                     }
-            } catch (e: Exception) {
-                _outputFlow.emit("Error: ${e.message}" to true)
+            } catch (t: Throwable) {
+                // Catch ALL throwables including JNI/native Errors from LiteRT.
+                // Without catching Throwable, a native context-overflow Error leaves
+                // agentPhase stuck in GENERATING and the app stops responding forever.
+                android.util.Log.e("LlmInferenceManager", "Generation error", t)
+                if (!completionEmitted) {
+                    completionEmitted = true
+                    _outputFlow.emit("Error: ${t.message}" to true)
+                }
             }
         }
     }

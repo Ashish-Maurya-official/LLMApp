@@ -51,6 +51,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Enable 120fps / High Refresh Rate
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val modes = window.windowManager.defaultDisplay.supportedModes
+            val maxMode = modes.maxByOrNull { it.refreshRate }
+            if (maxMode != null) {
+                window.attributes = window.attributes.apply {
+                    preferredDisplayModeId = maxMode.modeId
+                }
+            }
+        }
+
         llmInferenceManager = LlmInferenceManager(this)
         modelDownloader = ModelDownloader(this)
         settingsManager = SettingsManager(this)
@@ -183,8 +194,10 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("chat") {
                             val uiState by viewModel.uiState.collectAsState()
+                            val streamingState by viewModel.streamingState.collectAsState()
                             ChatScreen(
                                 uiState = uiState,
+                                streamingState = streamingState,
                                 onIntent = { intent -> viewModel.processIntent(intent) },
                                 openDrawer = { scope.launch { drawerState.open() } },
                                 onRegisterTokenCallback = { callback ->

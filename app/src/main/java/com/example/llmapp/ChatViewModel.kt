@@ -7,6 +7,8 @@ import com.example.llmapp.core.inference.LlmInferenceManager
 import com.example.llmapp.core.settings.SettingsManager
 import com.example.llmapp.ui.state.ChatIntent
 import com.example.llmapp.ui.state.ChatUiState
+import com.example.llmapp.ui.state.StreamingSegment
+import com.example.llmapp.ui.state.StreamingState
 import com.example.llmapp.ui.state.VoiceState
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -18,6 +20,70 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/**
+ * Parses visible streaming text into [StreamingSegment] list.
+ * Pure function — cheap enough to call on every 40ms token batch.
+ *
+ * Rules:
+ * - Consecutive lines starting with `|` form a [StreamingSegment.Table].
+ * - Each completed pipe-line (terminated by \n) is a separate element in
+ *   [StreamingSegment.Table.committedRows] — true per-row state granularity.
+ * - The currently-being-typed incomplete last pipe-line is [StreamingSegment.Table.partialRow].
+ * - Everything else is [StreamingSegment.Prose] with partial last non-pipe
+ *   lines included (prose streams character-by-character).
+ */
+private fun parseStreamingSegments(text: String): List<StreamingSegment> {
+    val result = mutableListOf<StreamingSegment>()
+    val lines = text.split("\n")
+    val endsWithNewline = text.endsWith("\n")
+    var proseBuffer = StringBuilder()
+    val tableRows = mutableListOf<String>()
+    var inTable = false
+    var i = 0
+
+    fun flushProse() {
+        val s = proseBuffer.toString().trimEnd('\n')
+        if (s.isNotBlank()) result.add(StreamingSegment.Prose(s))
+        proseBuffer = StringBuilder()
+    }
+    fun flushTable(partialRow: String = "") {
+        if (tableRows.isNotEmpty() || partialRow.isNotBlank()) {
+            result.add(StreamingSegment.Table(tableRows.toList(), partialRow))
+            tableRows.clear()
+        }
+        inTable = false
+    }
+
+    while (i < lines.size) {
+        val line = lines[i]
+        val isLastLine = i == lines.size - 1
+        val isPartial = isLastLine && !endsWithNewline
+        val isPipe = line.trimStart().startsWith("|")
+
+        when {
+            isPipe && !isPartial -> {
+                // Complete pipe-line — one new row committed
+                if (!inTable) { flushProse(); inTable = true }
+                tableRows.add(line.trim())
+            }
+            isPipe && isPartial -> {
+                // Partial pipe-line being typed right now
+                if (!inTable) flushProse()
+                flushTable(partialRow = line.trim())
+            }
+            !isPipe -> {
+                if (inTable) flushTable()
+                if (!isPartial) proseBuffer.append(line).append("\n")
+                else proseBuffer.append(line) // partial prose — show as-is
+            }
+        }
+        i++
+    }
+    if (inTable) flushTable()
+    flushProse()
+    return result.ifEmpty { listOf(StreamingSegment.Prose(text)) }
+}
 
 /**
  * Agent state machine states: IDLE – not running GENERATING – LLM is streaming tokens (initial or
@@ -36,6 +102,12 @@ private enum class AgentPhase {
 class ChatViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
+
+    // ── Isolated high-frequency streaming state ───────────────────────────────
+    // Only the live generating bubble subscribes to this, so the stable
+    // message list never recomposes during token streaming.
+    private val _streamingState = MutableStateFlow(StreamingState())
+    val streamingState: StateFlow<StreamingState> = _streamingState.asStateFlow()
 
     private val _themePreference = MutableStateFlow("System")
     val themePreference: StateFlow<String> = _themePreference.asStateFlow()
@@ -89,7 +161,17 @@ class ChatViewModel : ViewModel() {
             field = value
             value?.let { manager ->
                 viewModelScope.launch {
-                    manager.outputFlow.collect { (token, done) -> handleToken(token, done) }
+                    var lastUiUpdateTime = 0L
+                    val pendingTokens = java.lang.StringBuilder()
+                    manager.outputFlow.collect { (token, done) -> 
+                        pendingTokens.append(token)
+                        val now = System.currentTimeMillis()
+                        if (done || now - lastUiUpdateTime > 40) {
+                            handleToken(pendingTokens.toString(), done)
+                            pendingTokens.clear()
+                            lastUiUpdateTime = now
+                        }
+                    }
                 }
             }
         }
@@ -181,7 +263,7 @@ class ChatViewModel : ViewModel() {
                 var messagesToSave: List<ChatMessage> = emptyList()
 
                 _uiState.update { state ->
-                    val newRaw = state.currentGeneratingRawContent + token
+                    val newRaw = _streamingState.value.rawContent + token
                     val parsed = parseStreamContent(newRaw)
 
                     // ── Sentinel & Refusal detection ────────────────────────────────
@@ -199,23 +281,25 @@ class ChatViewModel : ViewModel() {
 
                     if (pendingAction == null &&
                         (newRaw.contains(SEARCH_SENTINEL) || isRefusal) &&
-                        state.currentActions.isEmpty()
+                        _streamingState.value.actions.isEmpty()
                     ) {
                         val query = currentUserQuery
                         agentPhase = AgentPhase.SEARCHING
                         pendingAction = AgentAction("WebSearch", query)
+                        val searchAction = AgentAction("WebSearch", query)
 
-                        return@update state.copy(
-                            currentGeneratingRawContent = "",
-                            currentGeneratingMessage = "",
-                            currentThoughts = emptyList(),
-                            currentActions = listOf(AgentAction("WebSearch", query))
+                        _streamingState.value = StreamingState(
+                            rawContent = "",
+                            visibleText = "",
+                            thoughts = emptyList(),
+                            actions = listOf(searchAction)
                         )
+                        return@update state
                     }
 
                     // ── Forward visible answer text to TTS ──────────────────────────
                     val displayText = parsed.visibleText
-                    val currentTtsText = state.currentGeneratingMessage
+                    val currentTtsText = _streamingState.value.visibleText
                     
                     val newTtsText = if (displayText.length > currentTtsText.length) {
                         displayText.substring(currentTtsText.length)
@@ -232,6 +316,7 @@ class ChatViewModel : ViewModel() {
                     // ── Generation complete ──────────────────────────────────────────
                     if (done) {
                         agentPhase = AgentPhase.IDLE
+                        val currentStreaming = _streamingState.value
 
                         val finalRawContent = if (lastSearchResultContext != null) {
                             "$SEARCH_SENTINEL<end_of_turn>\n<start_of_turn>user\nI have searched the internet for you. Here are the search results:\n\n$lastSearchResultContext\n<end_of_turn>\n<start_of_turn>model\n$newRaw"
@@ -243,28 +328,31 @@ class ChatViewModel : ViewModel() {
                             text = displayText,
                             isUser = false,
                             thoughts = parsed.thoughts,
-                            actions = state.currentActions,
+                            actions = currentStreaming.actions,
                             rawContent = finalRawContent
                         )
                         val updatedMessages = state.messages + finalMsg
                         shouldSave = true
                         messagesToSave = updatedMessages
 
+                        // Reset streaming state first so bubble disappears atomically
+                        _streamingState.value = StreamingState()
+
                         state.copy(
                             messages = updatedMessages,
-                            currentGeneratingMessage = "",
-                            currentGeneratingRawContent = "",
-                            currentThoughts = emptyList(),
-                            currentActions = emptyList(),
                             isGenerating = false
                         )
                     } else {
-                        state.copy(
-                            currentGeneratingRawContent = newRaw,
-                            currentGeneratingMessage = displayText,
-                            currentThoughts = parsed.thoughts,
-                            isGenerating = true
+                        // Update ONLY streaming state — main uiState.messages untouched
+                        _streamingState.value = StreamingState(
+                            rawContent = newRaw,
+                            visibleText = displayText,
+                            segments = parseStreamingSegments(displayText),
+                            thoughts = parsed.thoughts,
+                            actions = _streamingState.value.actions
                         )
+                        // Only flip isGenerating once at the start, not every token
+                        if (!state.isGenerating) state.copy(isGenerating = true) else state
                     }
                 }
 
@@ -295,14 +383,13 @@ class ChatViewModel : ViewModel() {
     }
 
     private fun storeObservation(llmText: String, uiText: String?) {
-        // Update the last action with displayable sources
-        val currentActions = _uiState.value.currentActions.toMutableList()
+        // Update the last action with displayable sources in the streaming state
+        val currentActions = _streamingState.value.actions.toMutableList()
         if (currentActions.isNotEmpty() && uiText != null) {
             currentActions[currentActions.lastIndex] =
                     currentActions.last().copy(uiSources = uiText)
         }
-
-        _uiState.update { it.copy(currentActions = currentActions) }
+        _streamingState.value = _streamingState.value.copy(actions = currentActions)
 
         // Always store the result so the SEARCHING done handler can pick it up.
         pendingSearchResult = SearchResult(llmText, uiText ?: "")
@@ -397,13 +484,10 @@ class ChatViewModel : ViewModel() {
                     agentPhase = AgentPhase.IDLE
                     pendingAction = null
                     pendingSearchResult = null
+                    _streamingState.value = StreamingState()
                     _uiState.update {
                         it.copy(
                                 isGenerating = false,
-                                currentGeneratingMessage = "",
-                                currentGeneratingRawContent = "",
-                                currentThoughts = emptyList(),
-                                currentActions = emptyList(),
                                 status = "Stopped"
                         )
                     }
@@ -420,14 +504,11 @@ class ChatViewModel : ViewModel() {
         pendingSearchResult = null
         currentUserQuery = text
 
-        val userMessage = ChatMessage(text, isUser = true)
+        val userMessage = ChatMessage(text = text, isUser = true)
+        _streamingState.value = StreamingState() // reset before new generation
         _uiState.update { state ->
             state.copy(
                     messages = state.messages + listOf(userMessage),
-                    currentGeneratingMessage = "",
-                    currentGeneratingRawContent = "",
-                    currentThoughts = emptyList(),
-                    currentActions = emptyList(),
                     isGenerating = true,
                     errorMessage = null
             )

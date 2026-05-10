@@ -194,7 +194,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("chat") {
                             val uiState by viewModel.uiState.collectAsState()
-                            val streamingState by viewModel.streamingState.collectAsState()
+                            val streamingState = viewModel.streamingState.collectAsState()
                             ChatScreen(
                                 uiState = uiState,
                                 streamingState = streamingState,

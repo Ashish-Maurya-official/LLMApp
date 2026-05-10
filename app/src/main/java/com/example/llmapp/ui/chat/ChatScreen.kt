@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -67,7 +68,7 @@ import com.example.llmapp.ui.state.StreamingState
 @Composable
 fun ChatScreen(
     uiState: ChatUiState,
-    streamingState: StreamingState,
+    streamingState: State<StreamingState>,
     onIntent: (ChatIntent) -> Unit,
     openDrawer: () -> Unit,
     onRegisterTokenCallback: ((token: String, done: Boolean) -> Unit) -> Unit = {},
@@ -78,13 +79,24 @@ fun ChatScreen(
 
     var autoScrollEnabled by remember { mutableStateOf(true) }
 
-    // Observer: Checks the scroll position whenever ANY scroll (drag, fling, or 
-    // programmatic) finishes. If the list stops near the bottom, auto-scroll is 
-    // enabled. If it stops higher up, auto-scroll pauses.
-    // This perfectly handles all scenarios without complex nested scroll logic.
+    var isUserScrolling by remember { mutableStateOf(false) }
+
+    // 1. Instantly pause auto-scroll the moment the user touches and drags the list
+    val isDragged by listState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(isDragged) {
+        if (isDragged) {
+            isUserScrolling = true
+            autoScrollEnabled = false
+        }
+    }
+
+    // 2. Observer: Checks the scroll position whenever a MANUAL scroll finishes.
+    // By guarding with `isUserScrolling`, we completely ignore programmatic scrollToItem
+    // calls, preventing them from accidentally breaking the state.
     LaunchedEffect(listState.isScrollInProgress) {
-        if (!listState.isScrollInProgress) {
-            autoScrollEnabled = listState.isNearBottom()
+        if (!listState.isScrollInProgress && isUserScrolling) {
+            autoScrollEnabled = listState.isNearBottom(100)
+            isUserScrolling = false
         }
     }
 
@@ -99,7 +111,7 @@ fun ChatScreen(
     // Streaming scroll: collectLatest ensures we only handle the latest token update.
     // We wait for TWO frames to ensure markdown tables have stabilized their layout
     // (which often involves multiple measure/layout passes) before scrolling.
-    val streamingContentLength by rememberUpdatedState(streamingState.rawContent.length)
+    val streamingContentLength by remember { derivedStateOf { streamingState.value.rawContent.length } }
     val isCurrentlyGenerating by rememberUpdatedState(uiState.isGenerating)
 
     LaunchedEffect(Unit) {
@@ -359,33 +371,11 @@ fun ChatScreen(
                 }
             }
             if (uiState.isGenerating) {
-                if (streamingState.rawContent.isNotBlank()) {
-                    item(key = "streaming_bubble") {
-                        val genMsg = ChatMessage(
-                            text = streamingState.visibleText,
-                            isUser = false,
-                            thoughts = streamingState.thoughts,
-                            actions = streamingState.actions
-                        )
-                        AssistantMessageBubble(
-                            message = genMsg,
-                            segments = streamingState.segments,
-                            onCopy = { clipboardManager.setText(AnnotatedString(streamingState.visibleText)) },
-                            isStreaming = true
-                        )
-                    }
-                } else {
-                    item(key = "thinking_indicator") {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Thinking...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                item(key = "streaming_bubble") {
+                    StreamingBubbleItem(
+                        streamingState = streamingState,
+                        clipboardManager = clipboardManager
+                    )
                 }
             }
             item(key = "bottom_anchor") { Spacer(Modifier.height(1.dp)) }
@@ -475,6 +465,7 @@ fun ChatScreen(
                         onClick = {
                             onIntent(ChatIntent.SendMessage(inputText))
                             inputText = ""
+                            autoScrollEnabled = true
                         },
                         modifier = Modifier
                             .size(42.dp)
@@ -560,6 +551,38 @@ fun ChatScreen(
 }
 
 @Composable
+fun StreamingBubbleItem(
+    streamingState: State<StreamingState>,
+    clipboardManager: androidx.compose.ui.platform.ClipboardManager
+) {
+    val state = streamingState.value
+    if (state.rawContent.isNotBlank()) {
+        val genMsg = ChatMessage(
+            text = state.visibleText,
+            isUser = false,
+            thoughts = state.thoughts,
+            actions = state.actions
+        )
+        AssistantMessageBubble(
+            message = genMsg,
+            segments = state.segments,
+            onCopy = { clipboardManager.setText(AnnotatedString(state.visibleText)) },
+            isStreaming = true
+        )
+    } else {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                "Thinking...",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
 fun UserMessageBubble(text: String, modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.CenterEnd) {
         Surface(
@@ -585,17 +608,24 @@ fun AssistantMessageBubble(
     segments: List<StreamingSegment> = emptyList(),
     modifier: Modifier = Modifier
 ) {
-    Row(modifier = modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-            modifier = Modifier.size(32.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    Column(modifier = modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 8.dp)
         ) {
-            Icon(Icons.Default.SmartToy, contentDescription = "AI", modifier = Modifier.padding(6.dp), tint = MaterialTheme.colorScheme.onSurface)
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                modifier = Modifier.size(24.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ) {
+                Icon(Icons.Default.SmartToy, contentDescription = "AI", modifier = Modifier.padding(4.dp), tint = MaterialTheme.colorScheme.onSurface)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Assistant", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
+        
+        Column(modifier = Modifier.fillMaxWidth()) {
             // Render thoughts
             if (message.thoughts.isNotEmpty()) {
                 var expanded by remember { mutableStateOf(false) }
@@ -1122,9 +1152,16 @@ fun SegmentedStreamingContent(segments: List<StreamingSegment>) {
  * This is read live inside coroutines (not derivedStateOf), so it is always
  * fresh at the exact moment of the scroll decision — no stale state risk.
  */
-fun LazyListState.isNearBottom(thresholdPx: Int = 300): Boolean {
+fun LazyListState.isNearBottom(thresholdPx: Int = 100): Boolean {
     val layoutInfo = layoutInfo
+    val totalItems = layoutInfo.totalItemsCount
+    if (totalItems == 0) return true
+    
     val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return true
+    
+    // CRITICAL FIX: Ensure the last item on screen is ACTUALLY the last item in the entire list!
+    if (lastVisible.index < totalItems - 1) return false
+    
     val viewportBottom = layoutInfo.viewportEndOffset
     // lastVisible.offset is the item's top relative to viewport top (can be negative).
     // Adding size gives the item's bottom edge relative to viewport top.

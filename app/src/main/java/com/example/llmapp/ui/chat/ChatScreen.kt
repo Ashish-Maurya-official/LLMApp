@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.text.BasicTextField
@@ -335,7 +336,7 @@ fun ChatScreen(
             )
         }
     ) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize().padding(innerPadding).imePadding()) {
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding).imePadding()) {
             Column(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
             if (uiState.errorMessage != null) {
             Surface(
@@ -420,16 +421,11 @@ fun ChatScreen(
             item(key = "bottom_anchor") { Spacer(Modifier.height(1.dp)) }
         }
 
-        // Animate bottom padding to lift input box above keyboard
-        val inputBottomPadding by animateDpAsState(
-            targetValue = if (isImeVisible) 24.dp else 12.dp
-        )
-
         // Input Area
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = inputBottomPadding),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.Bottom
         ) {
             AnimatedVisibility(

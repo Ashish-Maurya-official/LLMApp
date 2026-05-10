@@ -67,6 +67,11 @@ class ModelDownloader(private val context: Context) {
         return if (file.exists()) file.absolutePath else null
     }
 
+    fun deleteModel(fileName: String): Boolean {
+        val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
+        return if (file.exists()) file.delete() else false
+    }
+
     fun getLocalModels(): List<String> {
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return emptyList()
         return dir.listFiles()

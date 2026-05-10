@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -277,9 +278,19 @@ fun ModelScreen(
                         } else {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
+                                horizontalArrangement = if (isDownloaded) Arrangement.SpaceBetween else Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 if (isDownloaded) {
+                                    IconButton(
+                                        onClick = {
+                                            if (modelDownloader.deleteModel(model.fileName)) {
+                                                refreshDownloadedModels(models)
+                                            }
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete Model", tint = MaterialTheme.colorScheme.error)
+                                    }
                                     Button(
                                         onClick = {
                                             modelDownloader.getDownloadedModelPath(model.fileName)

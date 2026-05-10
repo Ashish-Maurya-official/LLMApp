@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -33,10 +34,13 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -47,6 +51,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.ui.util.fastForEach
 import com.example.llmapp.core.voice.VoiceManager
 import com.example.llmapp.ui.state.ChatIntent
 import com.example.llmapp.ui.state.ChatUiState
@@ -69,38 +75,46 @@ fun ChatScreen(
 ) {
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
-    
-    // ── isAtBottom: true when the bottom anchor (always the last item) is visible ──
-    // The anchor is a 1dp spacer permanently at the end of the list.
-    // This means we NEVER need pixel math — if the anchor is on screen, we're at the bottom.
-    val isAtBottom by remember {
-        derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            if (layoutInfo.totalItemsCount == 0) return@derivedStateOf true
-            val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
-                ?: return@derivedStateOf true
-            // True only when the very last item (bottom anchor) is visible
-            lastVisibleItem.index == layoutInfo.totalItemsCount - 1
+
+    var autoScrollEnabled by remember { mutableStateOf(true) }
+
+    // Observer: Checks the scroll position whenever ANY scroll (drag, fling, or 
+    // programmatic) finishes. If the list stops near the bottom, auto-scroll is 
+    // enabled. If it stops higher up, auto-scroll pauses.
+    // This perfectly handles all scenarios without complex nested scroll logic.
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (!listState.isScrollInProgress) {
+            autoScrollEnabled = listState.isNearBottom()
         }
     }
 
     // Structural scroll: fires when a message is added or generation starts/ends.
-    // animateScrollToItem targets the anchor index — always the real content bottom.
     LaunchedEffect(uiState.messages.size, uiState.isGenerating) {
-        if (isAtBottom) {
+        if (autoScrollEnabled) {
             val anchorIndex = listState.layoutInfo.totalItemsCount - 1
             if (anchorIndex >= 0) listState.animateScrollToItem(anchorIndex)
         }
     }
 
-    // Streaming scroll: fires on every token batch. Instant (no animation) so it
-    // never competes with a user drag. Targets the anchor — zero offset math,
-    // zero jump-to-top risk. If isAtBottom is false (user scrolled up), skipped.
-    LaunchedEffect(streamingState.rawContent.length) {
-        if (uiState.isGenerating && isAtBottom) {
-            val anchorIndex = listState.layoutInfo.totalItemsCount - 1
-            if (anchorIndex >= 0) listState.scrollToItem(anchorIndex)
-        }
+    // Streaming scroll: collectLatest ensures we only handle the latest token update.
+    // We wait for TWO frames to ensure markdown tables have stabilized their layout
+    // (which often involves multiple measure/layout passes) before scrolling.
+    val streamingContentLength by rememberUpdatedState(streamingState.rawContent.length)
+    val isCurrentlyGenerating by rememberUpdatedState(uiState.isGenerating)
+
+    LaunchedEffect(Unit) {
+        snapshotFlow { streamingContentLength }
+            .collectLatest {
+                if (!isCurrentlyGenerating) return@collectLatest
+                
+                withFrameNanos { }
+                withFrameNanos { }
+                
+                if (autoScrollEnabled) {
+                    val anchorIndex = listState.layoutInfo.totalItemsCount - 1
+                    if (anchorIndex >= 0) listState.scrollToItem(anchorIndex)
+                }
+            }
     }
 
     val clipboardManager = LocalClipboardManager.current
@@ -289,8 +303,7 @@ fun ChatScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            contentPadding = PaddingValues(vertical = 8.dp)
         ) {
             // Empty state
             if (uiState.messages.isEmpty() && !uiState.isGenerating) {
@@ -336,11 +349,12 @@ fun ChatScreen(
 
             items(uiState.messages, key = { it.id }) { msg ->
                 if (msg.isUser) {
-                    UserMessageBubble(text = msg.text)
+                    UserMessageBubble(text = msg.text, modifier = Modifier.padding(vertical = 8.dp))
                 } else {
                     AssistantMessageBubble(
                         message = msg,
-                        onCopy = { clipboardManager.setText(AnnotatedString(msg.text)) }
+                        onCopy = { clipboardManager.setText(AnnotatedString(msg.text)) },
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
                 }
             }
@@ -381,8 +395,7 @@ fun ChatScreen(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 12.dp)
-                .animateContentSize(),
+                .padding(bottom = 12.dp),
             shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
@@ -547,8 +560,8 @@ fun ChatScreen(
 }
 
 @Composable
-fun UserMessageBubble(text: String) {
-    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.CenterEnd) {
+fun UserMessageBubble(text: String, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.CenterEnd) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
             shape = RoundedCornerShape(20.dp),
@@ -569,9 +582,10 @@ fun AssistantMessageBubble(
     message: ChatMessage,
     onCopy: () -> Unit,
     isStreaming: Boolean = false,
-    segments: List<StreamingSegment> = emptyList()
+    segments: List<StreamingSegment> = emptyList(),
+    modifier: Modifier = Modifier
 ) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
+    Row(modifier = modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
         Surface(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -703,9 +717,13 @@ fun MarkwonText(markdown: String, modifier: Modifier = Modifier) {
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
             android.widget.TextView(ctx).apply {
-                setTextColor(surfaceColor.hashCode())
+                setTextColor(surfaceColor.toArgb())
                 textSize = bodyLargeSize
                 setLineSpacing(4f, 1.1f)
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
             }
         },
         update = { view ->
@@ -715,13 +733,14 @@ fun MarkwonText(markdown: String, modifier: Modifier = Modifier) {
                 markwon.setMarkdown(view, markdown)
             }
         },
-        modifier = modifier
+        modifier = modifier.fillMaxWidth()
     )
 }
 
 @Composable
 fun ParsedMarkdownMessage(text: String) {
-    val parts = parseMarkdownParts(text)
+    // remember(text): parsing only runs when text changes, not on every recomposition.
+    val parts = remember(text) { parseMarkdownParts(text) }
     val clipboardManager = LocalClipboardManager.current
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -925,12 +944,14 @@ fun LiveMarkdownTable(
     val headerBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
     val colCount = headers.size.coerceAtLeast(1)
 
+    val horizontalScrollState = rememberScrollState()
+
     Surface(
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, borderColor),
         modifier = Modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
+            .horizontalScroll(horizontalScrollState)
     ) {
         Column {
             // Header
@@ -946,7 +967,7 @@ fun LiveMarkdownTable(
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier
-                            .widthIn(min = 80.dp)
+                            .width(120.dp)
                             .padding(horizontal = 8.dp)
                     )
                 }
@@ -970,7 +991,7 @@ fun LiveMarkdownTable(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier
-                                .widthIn(min = 80.dp)
+                                .width(120.dp)
                                 .padding(horizontal = 8.dp)
                         )
                     }
@@ -1042,7 +1063,14 @@ fun StreamingMessageContent(text: String) {
 fun SegmentedStreamingContent(segments: List<StreamingSegment>) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         segments.forEachIndexed { index, segment ->
-            key(index, segment::class) {
+            // Use a stable key: segment type + its row/content count.
+            // This avoids recreating composables when preceding segments change
+            // during streaming mutations.
+            val segmentKey = when (segment) {
+                is StreamingSegment.Prose -> "prose_$index"
+                is StreamingSegment.Table -> "table_${index}_${segment.committedRows.size}"
+            }
+            key(segmentKey) {
                 when (segment) {
                     is StreamingSegment.Prose -> {
                         MarkwonText(
@@ -1076,4 +1104,29 @@ fun SegmentedStreamingContent(segments: List<StreamingSegment>) {
             }
         }
     }
+}
+
+// ── Auto-scroll helper ────────────────────────────────────────────────────────
+
+/**
+ * Returns true when the user is within [thresholdPx] pixels of the list bottom.
+ *
+ * Pixel-based rather than item-count-based so it stays accurate when items
+ * have variable height (markdown tables, code blocks, etc.).
+ *
+ * Behaviour:
+ * - User at bottom            → true  → auto-scroll active
+ * - User scrolled up > 300px  → false → auto-scroll paused
+ * - User scrolls back down    → true  → auto-scroll resumes automatically
+ *
+ * This is read live inside coroutines (not derivedStateOf), so it is always
+ * fresh at the exact moment of the scroll decision — no stale state risk.
+ */
+fun LazyListState.isNearBottom(thresholdPx: Int = 300): Boolean {
+    val layoutInfo = layoutInfo
+    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return true
+    val viewportBottom = layoutInfo.viewportEndOffset
+    // lastVisible.offset is the item's top relative to viewport top (can be negative).
+    // Adding size gives the item's bottom edge relative to viewport top.
+    return (lastVisible.offset + lastVisible.size) >= (viewportBottom - thresholdPx)
 }

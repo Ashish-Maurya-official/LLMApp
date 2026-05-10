@@ -27,6 +27,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemKey
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -84,6 +86,7 @@ import com.example.llmapp.ui.state.StreamingState
 @Composable
 fun ChatScreen(
     uiState: ChatUiState,
+    sessionMessages: List<ChatMessage>,
     streamingState: State<StreamingState>,
     onIntent: (ChatIntent) -> Unit,
     openDrawer: () -> Unit,
@@ -125,8 +128,10 @@ fun ChatScreen(
         }
     }
 
+
+
     // Structural scroll: fires when a message is added or generation starts/ends.
-    LaunchedEffect(uiState.messages.size, uiState.isGenerating) {
+    LaunchedEffect(sessionMessages.size, uiState.isGenerating) {
         if (autoScrollEnabled) {
             val anchorIndex = listState.layoutInfo.totalItemsCount - 1
             if (anchorIndex >= 0) listState.animateScrollToItem(anchorIndex)
@@ -344,10 +349,11 @@ fun ChatScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(vertical = 8.dp)
+            contentPadding = PaddingValues(vertical = 8.dp),
+            reverseLayout = false
         ) {
             // Empty state
-            if (uiState.messages.isEmpty() && !uiState.isGenerating) {
+            if (sessionMessages.isEmpty() && !uiState.isGenerating) {
                 item {
                     Column(
                         modifier = Modifier
@@ -388,7 +394,11 @@ fun ChatScreen(
                 }
             }
 
-            items(uiState.messages, key = { it.id }) { msg ->
+            // RAM-backed session messages
+            items(
+                items = sessionMessages,
+                key = { it.id }
+            ) { msg ->
                 if (msg.isUser) {
                     UserMessageBubble(text = msg.text, modifier = Modifier.padding(vertical = 8.dp))
                 } else {
@@ -399,6 +409,7 @@ fun ChatScreen(
                     )
                 }
             }
+
             if (uiState.isGenerating) {
                 item(key = "streaming_bubble") {
                     StreamingBubbleItem(
@@ -480,7 +491,7 @@ fun ChatScreen(
                         ),
                         minLines = 1,
                         maxLines = 8,
-                        enabled = !uiState.isGenerating,
+                        enabled = true,
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         decorationBox = { innerTextField ->
                             Box(contentAlignment = Alignment.CenterStart) {

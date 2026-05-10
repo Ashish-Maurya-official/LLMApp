@@ -101,19 +101,19 @@ class MainActivity : ComponentActivity() {
                             )
                             
                             val recentSessions = sessions.take(5)
-                            recentSessions.forEach { sessionId ->
+                            recentSessions.forEach { session ->
                                 NavigationDrawerItem(
                                     icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
                                     label = { 
                                         Text(
-                                            "Chat ${sessionId.takeLast(6)}", 
+                                            session.title, 
                                             maxLines = 1 
                                         ) 
                                     },
                                     selected = false,
                                     onClick = {
                                         scope.launch { drawerState.close() }
-                                        viewModel.processIntent(ChatIntent.RestoreSession(sessionId))
+                                        viewModel.processIntent(ChatIntent.RestoreSession(session.id))
                                         navController.navigate("chat") {
                                             popUpTo("chat") { inclusive = true }
                                         }
@@ -194,9 +194,11 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("chat") {
                             val uiState by viewModel.uiState.collectAsState()
+                            val sessionMessages by viewModel.sessionMessages.collectAsState()
                             val streamingState = viewModel.streamingState.collectAsState()
                             ChatScreen(
                                 uiState = uiState,
+                                sessionMessages = sessionMessages,
                                 streamingState = streamingState,
                                 onIntent = { intent -> viewModel.processIntent(intent) },
                                 openDrawer = { scope.launch { drawerState.open() } },
@@ -223,9 +225,9 @@ class MainActivity : ComponentActivity() {
                             composable("history") {
                                 HistoryScreen(
                                     sessions = sessions,
-                                    onDeleteSession = { sessionId -> viewModel.processIntent(ChatIntent.DeleteSession(sessionId)) },
-                                    onSessionSelected = { sessionId ->
-                                        viewModel.processIntent(ChatIntent.RestoreSession(sessionId))
+                                    onDeleteSession = { session -> viewModel.processIntent(ChatIntent.DeleteSession(session.id)) },
+                                    onSessionSelected = { session ->
+                                        viewModel.processIntent(ChatIntent.RestoreSession(session.id))
                                         navController.navigate("chat") {
                                             popUpTo(navController.graph.startDestinationId) { saveState = true }
                                             launchSingleTop = true

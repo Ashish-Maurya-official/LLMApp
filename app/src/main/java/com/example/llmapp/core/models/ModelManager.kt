@@ -37,12 +37,29 @@ class ModelManager(private val context: Context) {
             url = "https://huggingface.co/tiiuae/falcon-1b-it-gpu-int4/resolve/main/falcon-1b-it-gpu-int4.bin",
             fileName = "falcon-1b-it.bin",
             size = "0.9 GB"
+        ),
+        LlmModelInfo(
+            name = "MiniLM Embedding (Semantic Search)",
+            description = "Crucial for long-term memory and relevant retrieval. Highly recommended.",
+            url = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx",
+            fileName = "all-minilm-l6-v2.onnx",
+            size = "22 MB"
+        ),
+        LlmModelInfo(
+            name = "MiniLM Vocab",
+            description = "Vocabulary for the embedding model.",
+            url = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/vocab.txt",
+            fileName = "all-minilm-l6-v2-vocab.txt",
+            size = "0.2 MB"
         )
     )
 
     fun getDownloadedModels(): List<File> {
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return emptyList()
-        return dir.listFiles { file -> file.extension == "bin" }?.toList() ?: emptyList()
+        return dir.listFiles { file -> 
+            val ext = file.extension
+            ext == "bin" || ext == "litertlm" || ext == "onnx" || ext == "txt"
+        }?.toList() ?: emptyList()
     }
 
     fun downloadModel(model: LlmModelInfo) {

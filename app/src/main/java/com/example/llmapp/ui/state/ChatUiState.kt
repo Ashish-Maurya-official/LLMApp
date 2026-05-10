@@ -5,7 +5,6 @@ import com.example.llmapp.ChatMessage
 enum class VoiceState { IDLE, LISTENING, THINKING, SPEAKING }
 
 data class ChatUiState(
-    val messages: List<ChatMessage> = emptyList(),
     val isGenerating: Boolean = false,
     val isLoadingModel: Boolean = false,
     val status: String = "Ready",

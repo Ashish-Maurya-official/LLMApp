@@ -19,9 +19,9 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
-    sessions: List<String>,
-    onSessionSelected: (String) -> Unit,
-    onDeleteSession: (String) -> Unit,
+    sessions: List<com.example.llmapp.core.database.SessionEntity>,
+    onSessionSelected: (com.example.llmapp.core.database.SessionEntity) -> Unit,
+    onDeleteSession: (com.example.llmapp.core.database.SessionEntity) -> Unit,
     openDrawer: () -> Unit
 ) {
 
@@ -46,9 +46,9 @@ fun HistoryScreen(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(sessions) { sessionId ->
+                items(sessions) { session ->
                     Card(
-                        modifier = Modifier.fillMaxWidth().clickable { onSessionSelected(sessionId) },
+                        modifier = Modifier.fillMaxWidth().clickable { onSessionSelected(session) },
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Row(
@@ -56,18 +56,22 @@ fun HistoryScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            val sdf = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
-                            val dateStr = try {
-                                sdf.format(Date(sessionId.toLong()))
-                            } catch (e: Exception) {
-                                sessionId
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = session.title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                val sdf = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
+                                val dateStr = sdf.format(Date(session.timestamp))
+                                Text(
+                                    text = dateStr,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-
-                            Text(
-                                text = "Session: $dateStr",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            IconButton(onClick = { onDeleteSession(sessionId) }) {
+                            IconButton(onClick = { onDeleteSession(session) }) {
                                 Icon(Icons.Default.Delete, contentDescription = "Delete Session", tint = MaterialTheme.colorScheme.error)
                             }
                         }

@@ -9,15 +9,18 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import java.io.File
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class LlmInferenceManager(private val context: Context) {
     private var engine: Engine? = null
     private var conversation: Conversation? = null
     
-    private val _outputFlow = MutableSharedFlow<Pair<String, Boolean>>(extraBufferCapacity = 64)
-    val outputFlow: SharedFlow<Pair<String, Boolean>> = _outputFlow
+    private val _outputFlow = MutableSharedFlow<Triple<String, Boolean, String>>(extraBufferCapacity = 64)
+    val outputFlow: SharedFlow<Triple<String, Boolean, String>> = _outputFlow
     
     private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val inferenceMutex = Mutex()
 
     suspend fun loadModel(modelPath: String, hardwareBackend: String = "Auto", maxTokens: Int = 1024, temperature: Float = 0.8f, topK: Int = 40): String {
         return withContext(Dispatchers.IO) {
@@ -58,6 +61,16 @@ class LlmInferenceManager(private val context: Context) {
         return backendName
     }
 
+    suspend fun unloadModel() {
+        inferenceMutex.withLock {
+            conversation?.close()
+            conversation = null
+            engine?.close()
+            engine = null
+            Log.w("LlmInferenceManager", "Engine completely unloaded for thermal/memory recovery.")
+        }
+    }
+
     /**
      * Resets the Conversation's internal KV-cache by creating a fresh Conversation
      * from the existing Engine. This MUST be called before every generation when
@@ -70,35 +83,33 @@ class LlmInferenceManager(private val context: Context) {
         conversation = eng.createConversation()
     }
 
-    fun generateResponseAsync(prompt: String) {
-        resetConversation()
-        val freshConv = conversation ?: run {
-            scope.launch { _outputFlow.emit("Error: Model not initialized" to true) }
-            return
-        }
-
+    fun generateResponseAsync(prompt: String, generationId: String) {
         scope.launch {
-            var completionEmitted = false
-            try {
-                freshConv.sendMessageAsync(prompt)
-                    .onCompletion {
-                        // Guard against double-emit if catch block already fired
-                        if (!completionEmitted) {
-                            completionEmitted = true
-                            _outputFlow.emit("" to true)
+            inferenceMutex.withLock {
+                resetConversation()
+                val freshConv = conversation ?: run {
+                    _outputFlow.emit(Triple("Error: Model not initialized", true, generationId))
+                    return@withLock
+                }
+
+                var completionEmitted = false
+                try {
+                    freshConv.sendMessageAsync(prompt)
+                        .onCompletion {
+                            if (!completionEmitted) {
+                                completionEmitted = true
+                                _outputFlow.emit(Triple("", true, generationId))
+                            }
                         }
+                        .collect { chunk ->
+                            _outputFlow.emit(Triple(chunk.toString(), false, generationId))
+                        }
+                } catch (t: Throwable) {
+                    android.util.Log.e("LlmInferenceManager", "Generation error", t)
+                    if (!completionEmitted) {
+                        completionEmitted = true
+                        _outputFlow.emit(Triple("Error: ${t.message}", true, generationId))
                     }
-                    .collect { chunk ->
-                        _outputFlow.emit(chunk.toString() to false)
-                    }
-            } catch (t: Throwable) {
-                // Catch ALL throwables including JNI/native Errors from LiteRT.
-                // Without catching Throwable, a native context-overflow Error leaves
-                // agentPhase stuck in GENERATING and the app stops responding forever.
-                android.util.Log.e("LlmInferenceManager", "Generation error", t)
-                if (!completionEmitted) {
-                    completionEmitted = true
-                    _outputFlow.emit("Error: ${t.message}" to true)
                 }
             }
         }

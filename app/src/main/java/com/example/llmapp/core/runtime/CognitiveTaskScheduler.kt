@@ -1,0 +1,184 @@
+package com.example.llmapp.core.runtime
+
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.PriorityBlockingQueue
+import java.util.UUID
+
+class CognitiveTaskScheduler(private val scope: CoroutineScope) {
+
+    var llmInferenceManager: com.example.llmapp.core.inference.LlmInferenceManager? = null
+        set(value) {
+            field = value
+            value?.let { manager ->
+                scope.launch(Dispatchers.Default) {
+                    manager.outputFlow.collect { (chunk, done, genId) ->
+                        telemetry.onTokenEmitted(chunk)
+                        tokenAccumulator.onToken(chunk, done, genId)
+                    }
+                }
+            }
+        }
+
+    private val _events = MutableSharedFlow<CognitiveEvent>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val events: SharedFlow<CognitiveEvent> = _events.asSharedFlow()
+
+    private val _state = MutableStateFlow(CognitiveState())
+    val state: StateFlow<CognitiveState> = _state.asStateFlow()
+
+    private var activeJob: Job? = null
+    private val tokenBuffer = StringBuilder()
+    private val SENTINEL_REGEX = Regex("""\[SEARCH_NEEDED(?::\s*([^\]]+))?\]""")
+
+    private val telemetry = CognitiveTelemetry(scope) { telemetryEvent ->
+        scope.launch { emit(telemetryEvent) }
+    }
+
+    private val healthMonitor = RuntimeHealthMonitor(scope) { degradationEvent ->
+        scope.launch { emit(degradationEvent) }
+    }
+
+    private val thermalManager = ThermalRecoveryManager(scope) { thermalEvent ->
+        scope.launch { emit(thermalEvent) }
+    }
+
+    private var runtimeProfile = ConversationRuntimeProfile()
+
+    private val tokenAccumulator = TokenAccumulator(scope) { chunk, done, genId ->
+        scope.launch {
+            if (chunk.startsWith("Error:")) {
+                val error = com.example.llmapp.core.runtime.CognitiveError.InferenceError(chunk)
+                emit(CognitiveEvent.RuntimeEvent.Error(error, genId))
+            } else {
+                emit(CognitiveEvent.RuntimeEvent.TokenEmitted(chunk, done, genId))
+                if (done) emit(CognitiveEvent.RuntimeEvent.GenerationComplete(genId))
+            }
+        }
+    }
+
+    init {
+        telemetry.start()
+        tokenAccumulator.start()
+        scope.launch(Dispatchers.Default) {
+            _events.collect { event ->
+                processEvent(event)
+            }
+        }
+    }
+
+    fun emit(event: CognitiveEvent) {
+        scope.launch(Dispatchers.Default) {
+            _events.emit(event)
+        }
+    }
+
+    fun notifyThermalStatusChanged(status: Int) {
+        thermalManager.onThermalStatusChanged(status)
+    }
+
+    private suspend fun processEvent(event: CognitiveEvent) {
+        when (event) {
+            is CognitiveEvent.RuntimeEvent.GenerationRequested -> {
+                Log.d("CognitiveTaskScheduler", "Generation Requested: ${event.generationId}")
+                _state.value = _state.value.copy(activeGenerationId = event.generationId, phase = ExecutionPhase.GENERATING)
+                tokenBuffer.clear()
+                
+                activeJob?.cancel()
+                activeJob = scope.launch(Dispatchers.Default) {
+                    telemetry.onConversationReset()
+                    telemetry.onGenerationRequested()
+                    llmInferenceManager?.generateResponseAsync(event.prompt, event.generationId)
+                }
+            }
+            is CognitiveEvent.ToolEvent.SearchCompleted -> {
+                Log.d("CognitiveTaskScheduler", "Tool Search Completed, Resuming LLM")
+            }
+
+            is CognitiveEvent.SystemEvent.TelemetryUpdated -> {
+                healthMonitor.onTelemetry(event)
+            }
+
+            is CognitiveEvent.SystemEvent.DegradationRequested -> {
+                tokenAccumulator.setDegradationLevel(event.level)
+            }
+
+            is CognitiveEvent.SystemEvent.ThermalStatusChanged -> {
+                Log.w("CognitiveTaskScheduler", "Thermal State Changed to: ${event.state}")
+                if (event.state == CognitiveEvent.ThermalState.CRITICAL) {
+                    llmInferenceManager?.unloadModel()
+                }
+            }
+
+            is CognitiveEvent.UIEvent.UserInput -> {
+                Log.d("CognitiveTaskScheduler", "User Input: ${event.text}")
+                // In Phase 1, ChatViewModel maps UserInput to GenerationRequested with a full prompt.
+                // We just pass it through or let ViewModel handle UserInput directly.
+            }
+            is CognitiveEvent.RuntimeEvent.StopGeneration -> {
+                Log.d("CognitiveTaskScheduler", "Stop requested for gen: ${event.generationId}")
+                if (_state.value.activeGenerationId == event.generationId) {
+                    _state.value = _state.value.copy(activeGenerationId = null, phase = ExecutionPhase.IDLE)
+                    activeJob?.cancel()
+                }
+            }
+            is CognitiveEvent.RuntimeEvent.TokenEmitted -> {
+                if (_state.value.activeGenerationId != event.generationId) {
+                    Log.w("CognitiveTaskScheduler", "Dropped stale token from gen: ${event.generationId}")
+                    return
+                }
+                
+                tokenBuffer.append(event.token)
+                val raw = tokenBuffer.toString()
+                
+                // Sentinel detection (Web Search Tool)
+                val sentinelMatch = SENTINEL_REGEX.find(raw)
+                val refusalPhrases = listOf(
+                    "I do not have access to the internet", "I cannot access the internet",
+                    "I don't have access to the internet", "I cannot browse",
+                    "I don't have real-time", "I do not have real-time"
+                )
+                val needsSearch = sentinelMatch != null || refusalPhrases.any { raw.contains(it, ignoreCase = true) }
+                
+                if (needsSearch && _state.value.phase != ExecutionPhase.RETRIEVING) {
+                    val extractedQuery = sentinelMatch?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() } ?: ""
+                    Log.d("CognitiveTaskScheduler", "Sentinel detected. Preempting generation for query: $extractedQuery")
+                    
+                    // Stop LLM immediately
+                    activeJob?.cancel()
+                    _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
+                    emit(CognitiveEvent.ToolEvent.SearchRequested(extractedQuery, event.generationId))
+                }
+            }
+            is CognitiveEvent.RuntimeEvent.GenerationComplete -> {
+                if (_state.value.activeGenerationId == event.generationId) {
+                    _state.value = _state.value.copy(phase = ExecutionPhase.IDLE)
+                }
+            }
+            is CognitiveEvent.RuntimeEvent.Error -> {
+                Log.e("CognitiveTaskScheduler", "Error in gen ${event.generationId}: ${event.error.message}")
+                if (_state.value.activeGenerationId == event.generationId) {
+                    _state.value = _state.value.copy(activeGenerationId = null, phase = ExecutionPhase.ERROR)
+                }
+            }
+            else -> {
+                // Handle other events like TokenEmitted or System events
+            }
+        }
+    }
+}

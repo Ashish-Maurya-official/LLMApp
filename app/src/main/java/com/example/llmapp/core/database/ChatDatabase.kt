@@ -10,13 +10,17 @@ import androidx.room.RoomDatabase
         SessionEntity::class,
         MessageEntity::class,
         MemoryEntity::class,
-        MemoryFtsEntity::class
+        MemoryFtsEntity::class,
+        GoalEntity::class,
+        CognitiveSnapshotEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
+    abstract fun goalDao(): GoalDao
+    abstract fun snapshotDao(): SnapshotDao
 
     companion object {
         @Volatile
@@ -28,7 +32,9 @@ abstract class ChatDatabase : RoomDatabase() {
                     context.applicationContext,
                     ChatDatabase::class.java,
                     "chat_database"
-                ).build()
+                )
+                .fallbackToDestructiveMigration()
+                .build()
                 INSTANCE = instance
                 instance
             }

@@ -35,8 +35,14 @@ interface ChatDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertMemory(memory: MemoryEntity)
 
-    @Query("SELECT * FROM memories JOIN memories_fts ON memories.id = memories_fts.rowid WHERE memories_fts MATCH :query")
+    @Query("SELECT * FROM memories JOIN memories_fts ON memories.id = memories_fts.rowid WHERE memories_fts MATCH :query LIMIT 50")
     fun searchMemoriesFts(query: String): List<MemoryEntity>
+
+    @Query("SELECT * FROM memories WHERE content = :content LIMIT 1")
+    fun getMemoryByExactContent(content: String): MemoryEntity?
+
+    @Query("UPDATE memories SET accessCount = accessCount + 1, lastAccessed = :timestamp WHERE id = :memoryId")
+    fun updateMemoryAccess(memoryId: Long, timestamp: Long)
 
     @Query("SELECT * FROM memories WHERE type = :type")
     fun getMemoriesByType(type: String): List<MemoryEntity>

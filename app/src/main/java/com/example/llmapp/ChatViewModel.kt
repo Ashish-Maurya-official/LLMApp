@@ -72,12 +72,8 @@ private fun parseStreamingSegments(text: String): List<StreamingSegment> {
 }
 
 // ---------------------------------------------------------------------------
-// Agent phase state machine
+// Agent phase state machine (Deprecating for CognitiveTaskScheduler)
 // ---------------------------------------------------------------------------
-
-private enum class AgentPhase {
-    IDLE, GENERATING, SEARCHING, GENERATING_QUERY, WAITING_FOR_SEARCH, RESUMING
-}
 
 // ---------------------------------------------------------------------------
 // ViewModel
@@ -147,43 +143,28 @@ class ChatViewModel : ViewModel() {
         hybridRetriever = com.example.llmapp.core.retrieval.HybridRetriever(hMgr.chatDao(), em)
     }
 
+    val cognitiveTaskScheduler = com.example.llmapp.core.runtime.CognitiveTaskScheduler(viewModelScope)
+
     // ── Session ID ───────────────────────────────────────────────────────────
     private var currentSessionId: String = System.currentTimeMillis().toString()
 
-    // ── Agent state ──────────────────────────────────────────────────────────
-    @Volatile private var agentPhase = AgentPhase.IDLE
-    @Volatile private var pendingAction: AgentAction? = null
-    @Volatile private var lastSearchResultContext: String? = null
     @Volatile private var currentUserQuery: String = ""
-    @Volatile private var currentSearchQuery: String = ""  // extracted from sentinel
-    @Volatile private var searchPerformedThisTurn = false
+    @Volatile private var activeDegradationLevel = com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.NORMAL
     var onNewToken: ((token: String, done: Boolean) -> Unit)? = null
 
-    // Sentinel the LLM must output to request a web search.
-    // Format: [SEARCH_NEEDED: <actual search query here>]
-    // Example: [SEARCH_NEEDED: Delhi weather today]
-    private val SEARCH_SENTINEL_PREFIX = "[SEARCH_NEEDED"
-    private val SENTINEL_REGEX = Regex("""\[SEARCH_NEEDED(?::\s*([^\]]+))?\]""")
+    init {
+        viewModelScope.launch {
+            cognitiveTaskScheduler.events.collect { event ->
+                handleCognitiveEvent(event)
+            }
+        }
+    }
 
     // ── LLM inference ────────────────────────────────────────────────────────
     var llmInferenceManager: LlmInferenceManager? = null
         set(value) {
             field = value
-            value?.let { manager ->
-                viewModelScope.launch {
-                    var lastUiUpdateTime = 0L
-                    val pendingTokens = java.lang.StringBuilder()
-                    manager.outputFlow.collect { (token, done) ->
-                        pendingTokens.append(token)
-                        val now = System.currentTimeMillis()
-                        if (done || now - lastUiUpdateTime > 40) {
-                            handleToken(pendingTokens.toString(), done)
-                            pendingTokens.clear()
-                            lastUiUpdateTime = now
-                        }
-                    }
-                }
-            }
+            cognitiveTaskScheduler.llmInferenceManager = value
         }
 
     // ── Parsing ──────────────────────────────────────────────────────────────
@@ -204,129 +185,107 @@ class ChatViewModel : ViewModel() {
         }
         // Strip any form of the sentinel (with or without embedded query)
         var clean = visibleText.toString()
+        val SENTINEL_REGEX = Regex("""\[SEARCH_NEEDED(?::\s*([^\]]+))?\]""")
         clean = SENTINEL_REGEX.replace(clean, "").replace("<thought>", "").trimStart()
         return ParsedContent(thoughts, clean, raw)
     }
 
-    // ── Token handler (agent state machine) ──────────────────────────────────
-    private fun handleToken(token: String, done: Boolean) {
-        when (agentPhase) {
-
-            AgentPhase.IDLE, AgentPhase.RESUMING -> { /* ignore */ }
-
-            AgentPhase.SEARCHING -> {
-                // Drain the first LLM pass; when done, fire the search with the pre-extracted query
-                if (done) {
-                    agentPhase = AgentPhase.WAITING_FOR_SEARCH
-                    performWebSearch(currentSearchQuery.ifBlank { currentUserQuery })
-                }
-            }
-
-            AgentPhase.GENERATING_QUERY -> { /* unused — kept for AgentPhase enum compat */ }
-
-            AgentPhase.WAITING_FOR_SEARCH -> { /* waiting for HTTP result, ignore tokens */ }
-
-            AgentPhase.GENERATING -> {
-                val newRaw = _streamingState.value.rawContent + token
+    // ── Token handler (event bus consumer) ───────────────────────────────────
+    private fun handleCognitiveEvent(event: com.example.llmapp.core.runtime.CognitiveEvent) {
+        when (event) {
+            is com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.TokenEmitted -> {
+                val newRaw = _streamingState.value.rawContent + event.token
                 val parsed = parseStreamContent(newRaw)
-
-                // ── Sentinel detection ───────────────────────────────────────
-                // The LLM outputs [SEARCH_NEEDED: <query>] — extract query inline.
-                // Also catch refusal phrases as a fallback.
-                val sentinelMatch = SENTINEL_REGEX.find(newRaw)
-                val refusalPhrases = listOf(
-                    "I do not have access to the internet", "I cannot access the internet",
-                    "I don't have access to the internet", "I cannot browse",
-                    "I don't have real-time", "I do not have real-time"
-                )
-                val needsSearch = sentinelMatch != null || refusalPhrases.any { newRaw.contains(it, ignoreCase = true) }
-
-                if (!searchPerformedThisTurn && pendingAction == null && needsSearch) {
-                    // Extract the query embedded in the sentinel, fallback to user question
-                    val extractedQuery = sentinelMatch?.groupValues?.getOrNull(1)?.trim()
-                        ?.takeIf { it.isNotBlank() } ?: currentUserQuery
-                    currentSearchQuery = extractedQuery
-                    searchPerformedThisTurn = true
-                    agentPhase = AgentPhase.SEARCHING
-                    pendingAction = AgentAction("WebSearch", extractedQuery)
-                    _streamingState.value = StreamingState(actions = listOf(AgentAction("WebSearch", extractedQuery)))
-                    Log.d("ChatViewModel", "Sentinel detected → query: \"$extractedQuery\"")
-                    return
-                }
 
                 // ── TTS forward ─────────────────────────────────────────────
                 val prev = _streamingState.value.visibleText
                 if (parsed.visibleText.length > prev.length) {
                     val newTts = parsed.visibleText.substring(prev.length).replace(Regex("[#*`_~]"), "")
-                    if (newTts.isNotBlank()) onNewToken?.invoke(newTts, done)
-                } else if (done && parsed.visibleText.isNotEmpty()) onNewToken?.invoke("", true)
+                    if (newTts.isNotBlank()) onNewToken?.invoke(newTts, event.isDone)
+                } else if (event.isDone && parsed.visibleText.isNotEmpty()) {
+                    onNewToken?.invoke("", true)
+                }
 
-                // ── Done: finalise message ───────────────────────────────────
-                if (done) {
-                    agentPhase = AgentPhase.IDLE
-                    val currentStreaming = _streamingState.value
-                    val finalRaw = if (lastSearchResultContext != null)
-                        "[SEARCH_NEEDED]\n<!-- search context injected -->\n$newRaw"
-                    else newRaw
-                    lastSearchResultContext = null
+                _streamingState.value = StreamingState(
+                    rawContent = newRaw,
+                    visibleText = parsed.visibleText,
+                    segments = parseStreamingSegments(parsed.visibleText),
+                    thoughts = parsed.thoughts,
+                    actions = _streamingState.value.actions
+                )
+                if (!_uiState.value.isGenerating) _uiState.update { it.copy(isGenerating = true) }
+            }
+            
+            is com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationComplete -> {
+                val currentStreaming = _streamingState.value
+                val parsed = parseStreamContent(currentStreaming.rawContent)
 
-                    val finalMsg = ChatMessage(
-                        text = parsed.visibleText,
-                        isUser = false,
-                        thoughts = parsed.thoughts,
-                        actions = currentStreaming.actions,
-                        rawContent = finalRaw
-                    )
-                    allMessages.add(finalMsg)
-                    if (allMessages.size > MAX_CONTEXT) allMessages.removeAt(0)
-                    pushMessages()
+                val finalMsg = ChatMessage(
+                    text = parsed.visibleText,
+                    isUser = false,
+                    thoughts = parsed.thoughts,
+                    actions = currentStreaming.actions,
+                    rawContent = currentStreaming.rawContent
+                )
+                allMessages.add(finalMsg)
+                if (allMessages.size > MAX_CONTEXT) allMessages.removeAt(0)
+                pushMessages()
 
-                    val snapshot = allMessages.toList()
-                    viewModelScope.launch(Dispatchers.IO) {
-                        historyManager?.saveSession(currentSessionId, snapshot)
-                        withContext(Dispatchers.Main) { refreshSessions() }
-                    }
+                val snapshot = allMessages.toList()
+                viewModelScope.launch(Dispatchers.IO) {
+                    historyManager?.saveSession(currentSessionId, snapshot)
+                    withContext(Dispatchers.Main) { refreshSessions() }
+                }
 
-                    _streamingState.value = StreamingState()
-                    _uiState.update { it.copy(isGenerating = false) }
+                _streamingState.value = StreamingState()
+                _uiState.update { it.copy(isGenerating = false) }
+            }
 
-                } else {
-                    _streamingState.value = StreamingState(
-                        rawContent = newRaw,
-                        visibleText = parsed.visibleText,
-                        segments = parseStreamingSegments(parsed.visibleText),
-                        thoughts = parsed.thoughts,
-                        actions = _streamingState.value.actions
-                    )
-                    if (!_uiState.value.isGenerating) _uiState.update { it.copy(isGenerating = true) }
+            is com.example.llmapp.core.runtime.CognitiveEvent.ToolEvent.SearchRequested -> {
+                _streamingState.value = StreamingState(actions = listOf(AgentAction("WebSearch", event.query)))
+                performWebSearch(event.query, event.generationId)
+            }
+
+            is com.example.llmapp.core.runtime.CognitiveEvent.SystemEvent.DegradationRequested -> {
+                activeDegradationLevel = event.level
+                Log.w("ChatViewModel", "Degradation Level Changed: ${event.level}")
+                if (event.level == com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.HARD_RESET) {
+                    processIntent(ChatIntent.ClearHistory)
                 }
             }
+
+            is com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.Error -> {
+                _uiState.update { it.copy(isGenerating = false, errorMessage = event.error.message) }
+            }
+            
+            else -> {}
         }
     }
 
     // ── Web search ────────────────────────────────────────────────────────────
-    private fun performWebSearch(query: String) {
+    private fun performWebSearch(query: String, genId: String) {
         Log.d("ChatViewModel", "performWebSearch: \"$query\"")
         viewModelScope.launch(Dispatchers.IO) {
             val skill = com.example.llmapp.core.skills.WebSearchSkill()
             val (uiText, llmText) = skill.search(query)
-            withContext(Dispatchers.Main) { storeObservation(llmText, uiText) }
+            withContext(Dispatchers.Main) { storeObservation(llmText, uiText, genId) }
         }
     }
 
-    private fun storeObservation(llmText: String, uiText: String?) {
+    private fun storeObservation(llmText: String, uiText: String?, genId: String) {
         // Update the action chip with clickable sources
         val actions = _streamingState.value.actions.toMutableList()
         if (actions.isNotEmpty() && uiText != null) {
             actions[actions.lastIndex] = actions.last().copy(uiSources = uiText)
         }
         _streamingState.value = _streamingState.value.copy(actions = actions)
-        lastSearchResultContext = llmText
-        pendingAction = null
 
-        agentPhase = AgentPhase.GENERATING
+        // Let the scheduler know search is complete
+        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ToolEvent.SearchCompleted(llmText, genId))
+        
         _uiState.update { it.copy(isGenerating = true) }
-        llmInferenceManager?.generateResponseAsync(buildPromptWithContext(currentUserQuery, llmText))
+        val promptWithContext = buildPromptWithContext(currentUserQuery, llmText)
+        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(promptWithContext, genId))
     }
 
     // ── Intent processor ──────────────────────────────────────────────────────
@@ -352,10 +311,9 @@ class ChatViewModel : ViewModel() {
             }
 
             is ChatIntent.StopGeneration -> {
-                agentPhase = AgentPhase.IDLE
-                pendingAction = null; searchPerformedThisTurn = false
                 _streamingState.value = StreamingState()
                 _uiState.update { it.copy(isGenerating = false) }
+                cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.StopGeneration(cognitiveTaskScheduler.state.value.activeGenerationId ?: ""))
             }
 
             is ChatIntent.ClearHistory -> {
@@ -373,7 +331,7 @@ class ChatViewModel : ViewModel() {
             }
 
             is ChatIntent.ModelLoaded -> _uiState.update { it.copy(activeBackend = intent.backend) }
-            is ChatIntent.SetError -> { agentPhase = AgentPhase.IDLE; _uiState.update { it.copy(errorMessage = intent.message, isGenerating = false, isLoadingModel = false) } }
+            is ChatIntent.SetError -> { _uiState.update { it.copy(errorMessage = intent.message, isGenerating = false, isLoadingModel = false) } }
             is ChatIntent.ActivateVoiceMode -> _uiState.update { it.copy(isVoiceModeActive = true, voiceState = VoiceState.LISTENING) }
             is ChatIntent.DeactivateVoiceMode -> _uiState.update { it.copy(isVoiceModeActive = false, voiceState = VoiceState.IDLE, partialTranscript = "") }
             is ChatIntent.SetVoiceState -> _uiState.update { it.copy(voiceState = intent.state) }
@@ -384,8 +342,7 @@ class ChatViewModel : ViewModel() {
     // ── Send message ──────────────────────────────────────────────────────────
     private fun handleSendMessage(text: String) {
         if (text.isBlank() || _uiState.value.isGenerating) return
-        agentPhase = AgentPhase.GENERATING
-        pendingAction = null; searchPerformedThisTurn = false; currentUserQuery = text
+        currentUserQuery = text
 
         val userMessage = ChatMessage(text = text, isUser = true)
         allMessages.add(userMessage)
@@ -395,10 +352,9 @@ class ChatViewModel : ViewModel() {
         _streamingState.value = StreamingState()
         _uiState.update { it.copy(isGenerating = true, errorMessage = null) }
 
-        viewModelScope.launch {
-            try { llmInferenceManager?.generateResponseAsync(buildPromptFromHistory(text)) }
-            catch (e: Exception) { agentPhase = AgentPhase.IDLE; _uiState.update { it.copy(isGenerating = false, errorMessage = e.message) } }
-        }
+        val genId = java.util.UUID.randomUUID().toString()
+        val prompt = buildPromptFromHistory(text)
+        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(prompt, genId))
     }
 
     // ── Prompt builders ───────────────────────────────────────────────────────
@@ -434,18 +390,20 @@ class ChatViewModel : ViewModel() {
         sb.append("<start_of_turn>model\nThe Prime Minister of India is Narendra Modi.<end_of_turn>\n")
 
         // Inject FTS memories if available
-        val memories = runCatching {
-            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-                hybridRetriever?.retrieveRelevance(pendingUserText) ?: emptyList()
+        if (activeDegradationLevel < com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.REDUCED_RETRIEVAL) {
+            val memories = runCatching {
+                kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                    hybridRetriever?.retrieveRelevance(pendingUserText) ?: emptyList()
+                }
+            }.getOrElse { emptyList() }
+            if (memories.isNotEmpty()) {
+                sb.append("<start_of_turn>user\nRelevant context from memory:\n")
+                memories.forEach { sb.append("- ${it.content}\n") }
+                sb.append("<end_of_turn>\n<start_of_turn>model\nNoted.<end_of_turn>\n")
             }
-        }.getOrElse { emptyList() }
-        if (memories.isNotEmpty()) {
-            sb.append("<start_of_turn>user\nRelevant context from memory:\n")
-            memories.forEach { sb.append("- ${it.content}\n") }
-            sb.append("<end_of_turn>\n<start_of_turn>model\nNoted.<end_of_turn>\n")
         }
 
-        val limit = settingsManager?.contextLimit ?: 10
+        val limit = if (activeDegradationLevel >= com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.SUMMARIZE_CONTEXT) 3 else (settingsManager?.contextLimit ?: 10)
         val msgCap = perMessageCharCap()
         allMessages.dropLast(1).takeLast(limit).forEach { msg ->
             val content = msg.text.take(msgCap); if (content.isBlank()) return@forEach
@@ -464,7 +422,7 @@ class ChatViewModel : ViewModel() {
         sb.append(buildSystemPrompt())
         sb.append("<end_of_turn>\n<start_of_turn>model\nSure, I am ready to help!<end_of_turn>\n")
 
-        val limit = settingsManager?.contextLimit ?: 10
+        val limit = if (activeDegradationLevel >= com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.SUMMARIZE_CONTEXT) 3 else (settingsManager?.contextLimit ?: 10)
         val msgCap = perMessageCharCap()
         allMessages.dropLast(1).takeLast(limit).forEach { msg ->
             val content = msg.text.take(msgCap); if (content.isBlank()) return@forEach

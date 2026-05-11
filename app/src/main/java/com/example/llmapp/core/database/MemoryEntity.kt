@@ -11,6 +11,9 @@ data class MemoryEntity(
     val type: String, // e.g., "semantic", "episodic", "profile"
     val content: String,
     val embedding: ByteArray? = null,
+    val trustZone: Int = 2, // 0=Identity, 1=User Explicit, 2=Inferred, 3=External
+    val lastAccessed: Long = System.currentTimeMillis(),
+    val accessCount: Int = 1,
     val timestamp: Long = System.currentTimeMillis()
 ) {
     override fun equals(other: Any?): Boolean {
@@ -27,6 +30,9 @@ data class MemoryEntity(
             if (other.embedding == null) return false
             if (!embedding.contentEquals(other.embedding)) return false
         } else if (other.embedding != null) return false
+        if (trustZone != other.trustZone) return false
+        if (lastAccessed != other.lastAccessed) return false
+        if (accessCount != other.accessCount) return false
         if (timestamp != other.timestamp) return false
 
         return true
@@ -38,6 +44,9 @@ data class MemoryEntity(
         result = 31 * result + type.hashCode()
         result = 31 * result + content.hashCode()
         result = 31 * result + (embedding?.contentHashCode() ?: 0)
+        result = 31 * result + trustZone
+        result = 31 * result + lastAccessed.hashCode()
+        result = 31 * result + accessCount
         result = 31 * result + timestamp.hashCode()
         return result
     }

@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import android.content.IntentFilter
+import android.content.Context
 import androidx.navigation.compose.rememberNavController
 import com.example.llmapp.core.inference.LlmInferenceManager
 import com.example.llmapp.core.models.ModelDownloader
@@ -70,6 +72,21 @@ class MainActivity : ComponentActivity() {
         viewModel.llmInferenceManager = llmInferenceManager
         viewModel.settingsManager = settingsManager
         viewModel.historyManager = historyManager
+
+        val chaosTestRunner = com.example.llmapp.core.runtime.ChaosTestRunner(viewModel.cognitiveTaskScheduler)
+        val filter = IntentFilter("com.example.llmapp.CHAOS_TEST")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(chaosTestRunner, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(chaosTestRunner, filter)
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            powerManager.addThermalStatusListener { status ->
+                viewModel.cognitiveTaskScheduler.notifyThermalStatusChanged(status)
+            }
+        }
 
         setContent {
             val themePref by viewModel.themePreference.collectAsState()

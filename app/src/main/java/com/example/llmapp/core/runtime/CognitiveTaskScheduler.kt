@@ -106,12 +106,34 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 Log.d("CognitiveTaskScheduler", "Generation Requested: ${event.generationId}")
                 _state.value = _state.value.copy(activeGenerationId = event.generationId, phase = ExecutionPhase.GENERATING)
                 tokenBuffer.clear()
-                
                 activeJob?.cancel()
                 activeJob = scope.launch(Dispatchers.Default) {
                     telemetry.onConversationReset()
                     telemetry.onGenerationRequested()
-                    llmInferenceManager?.generateResponseAsync(event.prompt, event.generationId)
+                    
+                    val routingPath = com.example.llmapp.core.inference.CognitiveLoadBalancer.determineRoutingPath(event.prompt, 0)
+                    
+                    if (routingPath == com.example.llmapp.core.inference.RoutingPath.STRATEGIC) {
+                        Log.d("CognitiveTaskScheduler", "Executing Deep Strategic Path")
+                        
+                        _state.value = _state.value.copy(phase = ExecutionPhase.PLANNING)
+                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Executing Multi-Agent Strategic Graph...\n[Node 1: Planner] Generating execution steps...\n</thought>", false, event.generationId))
+                        val plannerPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildPlannerPrompt(event.prompt)
+                        val plan = llmInferenceManager?.generateResponse(plannerPrompt) ?: ""
+                        
+                        _state.value = _state.value.copy(phase = ExecutionPhase.VERIFYING)
+                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>\n[Node 2: Verifier] Critiquing proposed plan for hallucinations...\n</thought>", false, event.generationId))
+                        val verifierPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildVerifierPrompt(event.prompt, plan)
+                        val verifiedPlan = llmInferenceManager?.generateResponse(verifierPrompt) ?: ""
+                        
+                        _state.value = _state.value.copy(phase = ExecutionPhase.SYNTHESIZING)
+                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>\n[Node 3: Synthesizer] Generating final response...\n</thought>\n\n", false, event.generationId))
+                        val synthesizerPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildSynthesizerPrompt(event.prompt, "Retrieved context included in main prompt", verifiedPlan)
+                        llmInferenceManager?.generateResponseAsync(synthesizerPrompt, event.generationId)
+                        
+                    } else {
+                        llmInferenceManager?.generateResponseAsync(event.prompt, event.generationId)
+                    }
                 }
             }
             is CognitiveEvent.ToolEvent.SearchCompleted -> {

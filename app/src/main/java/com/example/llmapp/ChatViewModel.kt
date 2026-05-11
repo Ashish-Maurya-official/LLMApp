@@ -169,6 +169,9 @@ class ChatViewModel : ViewModel() {
     var evaluationRunner: com.example.llmapp.core.evaluation.EvaluationRunner? = null
         private set
 
+    val intentThreadManager = com.example.llmapp.core.regulation.IntentThreadManager()
+    val socioCognitiveRegulator = com.example.llmapp.core.regulation.SocioCognitiveRegulator()
+
     val cognitiveTaskScheduler = com.example.llmapp.core.runtime.CognitiveTaskScheduler(viewModelScope)
 
     // ── Session ID ───────────────────────────────────────────────────────────
@@ -384,9 +387,16 @@ class ChatViewModel : ViewModel() {
             }
 
             is ChatIntent.StopGeneration -> {
+                val currentGenId = cognitiveTaskScheduler.state.value.activeGenerationId ?: ""
+                intentThreadManager.suspendIntent(
+                    generationId = currentGenId,
+                    prompt = currentUserQuery,
+                    partialResponse = _streamingState.value.visibleText
+                )
+                
                 _streamingState.value = StreamingState()
                 _uiState.update { it.copy(isGenerating = false) }
-                cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.StopGeneration(cognitiveTaskScheduler.state.value.activeGenerationId ?: ""))
+                cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.StopGeneration(currentGenId))
             }
 
             is ChatIntent.ClearHistory -> {
@@ -422,6 +432,9 @@ class ChatViewModel : ViewModel() {
     // ── Send message ──────────────────────────────────────────────────────────
     private fun handleSendMessage(text: String) {
         if (text.isBlank() || _uiState.value.isGenerating) return
+        
+        socioCognitiveRegulator.recordUserInteraction()
+        
         currentUserQuery = text
 
         val userMessage = ChatMessage(text = text, isUser = true)
@@ -434,17 +447,33 @@ class ChatViewModel : ViewModel() {
 
         val genId = java.util.UUID.randomUUID().toString()
         val prompt = buildPromptFromHistory(text)
-        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(prompt, genId))
+        
+        viewModelScope.launch {
+            val pacingDelay = socioCognitiveRegulator.calculatePacingDelayMs()
+            if (pacingDelay > 0) {
+                kotlinx.coroutines.delay(pacingDelay)
+            }
+            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(prompt, genId))
+        }
     }
 
     // ── Prompt builders ───────────────────────────────────────────────────────
 
     private fun buildPromptFromHistory(pendingUserText: String): String {
         val systemPrompt = buildSystemPrompt()
+        val regulatoryPrompt = socioCognitiveRegulator.generateRegulatoryPrompt()
+        
+        val suspended = intentThreadManager.popNextIntent()
+        val suspendedPrompt = if (suspended != null) {
+            "\n[SOCIO-COGNITIVE: You were recently interrupted while answering '\${suspended.originalPrompt}'. Your last words were '\${suspended.partialResponse}'. If relevant to the current flow, you may briefly conclude that thought.]\n"
+        } else ""
+        
         val sb = StringBuilder()
 
         sb.append("<start_of_turn>user\n")
         sb.append(systemPrompt)
+        sb.append(regulatoryPrompt)
+        sb.append(suspendedPrompt)
         sb.append("\n\n## WEB SEARCH TOOL\n")
         sb.append("You have access to a real-time web search tool.\n")
         sb.append("When you need current information (weather, news, live scores, prices, recent events), ")

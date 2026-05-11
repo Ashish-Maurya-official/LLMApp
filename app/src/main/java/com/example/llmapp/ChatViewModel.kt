@@ -123,10 +123,19 @@ class ChatViewModel : ViewModel() {
             cognitiveTaskScheduler.chatDao = hMgr.chatDao()
             cognitiveTaskScheduler.replayTracer = com.example.llmapp.core.telemetry.ReplayTracer(hMgr.context)
             cognitiveTaskScheduler.equilibriumMonitor = com.example.llmapp.core.telemetry.EquilibriumMonitor()
+            
+            // Initialize Voice Interaction Manager
+            voiceInteractionManager = com.example.llmapp.core.audio.VoiceInteractionManager(hMgr.context, viewModelScope)
+            viewModelScope.launch {
+                voiceInteractionManager?.events?.collect { handleVoiceEvent(it) }
+            }
 
             refreshSessions()
             settingsManager?.let { initializeRetrieval(it) }
         }
+        
+    var voiceInteractionManager: com.example.llmapp.core.audio.VoiceInteractionManager? = null
+        private set
 
     // ── Session list ─────────────────────────────────────────────────────────
     private val _sessionList = MutableStateFlow<List<com.example.llmapp.core.database.SessionEntity>>(emptyList())
@@ -226,9 +235,13 @@ class ChatViewModel : ViewModel() {
                 val prev = _streamingState.value.visibleText
                 if (parsed.visibleText.length > prev.length) {
                     val newTts = parsed.visibleText.substring(prev.length).replace(Regex("[#*`_~]"), "")
-                    if (newTts.isNotBlank()) onNewToken?.invoke(newTts, event.isDone)
+                    if (newTts.isNotBlank()) {
+                        onNewToken?.invoke(newTts, event.isDone)
+                        voiceInteractionManager?.onNewLlmToken(newTts, event.isDone)
+                    }
                 } else if (event.isDone && parsed.visibleText.isNotEmpty()) {
                     onNewToken?.invoke("", true)
+                    voiceInteractionManager?.onNewLlmToken("", true)
                 }
 
                 _streamingState.value = StreamingState(
@@ -284,6 +297,41 @@ class ChatViewModel : ViewModel() {
             }
             
             else -> {}
+        }
+    }
+
+    private fun handleVoiceEvent(event: com.example.llmapp.core.audio.VoiceEvent) {
+        when (event) {
+            is com.example.llmapp.core.audio.VoiceEvent.PartialTranscript -> {
+                _uiState.update { it.copy(partialTranscript = event.text) }
+            }
+            is com.example.llmapp.core.audio.VoiceEvent.FinalTranscript -> {
+                _uiState.update { it.copy(partialTranscript = "") }
+                handleSendMessage(event.text)
+            }
+            is com.example.llmapp.core.audio.VoiceEvent.UserStartedSpeaking -> {
+                // Barge-in: User interrupted the AI.
+                if (_uiState.value.isGenerating) {
+                    processIntent(ChatIntent.StopGeneration)
+                }
+            }
+            is com.example.llmapp.core.audio.VoiceEvent.UserStoppedSpeaking -> {
+                // Audio processing
+            }
+            is com.example.llmapp.core.audio.VoiceEvent.AIStartedSpeaking -> {
+                _uiState.update { it.copy(voiceState = VoiceState.SPEAKING) }
+            }
+            is com.example.llmapp.core.audio.VoiceEvent.AIFinishedSpeaking -> {
+                if (_uiState.value.isVoiceModeActive) {
+                    _uiState.update { it.copy(voiceState = VoiceState.LISTENING) }
+                    voiceInteractionManager?.startListening()
+                } else {
+                    _uiState.update { it.copy(voiceState = VoiceState.IDLE) }
+                }
+            }
+            is com.example.llmapp.core.audio.VoiceEvent.Error -> {
+                Log.e("VoiceInteraction", "Voice Error: \${event.message}")
+            }
         }
     }
 
@@ -357,8 +405,15 @@ class ChatViewModel : ViewModel() {
 
             is ChatIntent.ModelLoaded -> _uiState.update { it.copy(activeBackend = intent.backend) }
             is ChatIntent.SetError -> { _uiState.update { it.copy(errorMessage = intent.message, isGenerating = false, isLoadingModel = false) } }
-            is ChatIntent.ActivateVoiceMode -> _uiState.update { it.copy(isVoiceModeActive = true, voiceState = VoiceState.LISTENING) }
-            is ChatIntent.DeactivateVoiceMode -> _uiState.update { it.copy(isVoiceModeActive = false, voiceState = VoiceState.IDLE, partialTranscript = "") }
+            is ChatIntent.ActivateVoiceMode -> {
+                _uiState.update { it.copy(isVoiceModeActive = true, voiceState = VoiceState.LISTENING) }
+                voiceInteractionManager?.startListening()
+            }
+            is ChatIntent.DeactivateVoiceMode -> {
+                _uiState.update { it.copy(isVoiceModeActive = false, voiceState = VoiceState.IDLE, partialTranscript = "") }
+                voiceInteractionManager?.stopListening()
+                voiceInteractionManager?.stopSpeaking()
+            }
             is ChatIntent.SetVoiceState -> _uiState.update { it.copy(voiceState = intent.state) }
             is ChatIntent.SetPartialTranscript -> _uiState.update { it.copy(partialTranscript = intent.text) }
         }

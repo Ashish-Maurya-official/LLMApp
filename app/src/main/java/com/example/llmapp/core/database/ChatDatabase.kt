@@ -21,6 +21,7 @@ abstract class ChatDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun goalDao(): GoalDao
     abstract fun snapshotDao(): SnapshotDao
+    abstract fun cognitiveStateDao(): CognitiveStateDao
 
     companion object {
         @Volatile

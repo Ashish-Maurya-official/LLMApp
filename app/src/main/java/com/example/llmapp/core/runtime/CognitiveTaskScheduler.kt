@@ -16,8 +16,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.UUID
+import androidx.room.withTransaction
 
 class CognitiveTaskScheduler(private val scope: CoroutineScope) {
+
+    var chatDatabase: com.example.llmapp.core.database.ChatDatabase? = null
+    var cognitiveStateDao: com.example.llmapp.core.database.CognitiveStateDao? = null
+    var snapshotDao: com.example.llmapp.core.database.SnapshotDao? = null
+    var chatDao: com.example.llmapp.core.database.ChatDao? = null
 
     var llmInferenceManager: com.example.llmapp.core.inference.LlmInferenceManager? = null
         set(value) {
@@ -168,6 +174,49 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
             is CognitiveEvent.RuntimeEvent.GenerationComplete -> {
                 if (_state.value.activeGenerationId == event.generationId) {
                     _state.value = _state.value.copy(phase = ExecutionPhase.IDLE)
+                    
+                    // --- ATOMIC COGNITIVE STATE COMMIT ---
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val sessionId = _state.value.activeGenerationId ?: "unknown"
+                            
+                            // Mocking an inferred semantic memory for testing
+                            val newMemories = listOf(
+                                com.example.llmapp.core.database.MemoryEntity(
+                                    sessionId = sessionId,
+                                    type = "semantic",
+                                    content = "Agent successfully generated a response for session $sessionId.",
+                                    trustZone = 2 // Agent Inferred
+                                )
+                            )
+                            val newGoals = emptyList<com.example.llmapp.core.database.GoalEntity>()
+
+                            // Calculate epistemic hash
+                            val recentMemories = chatDao?.getMemoriesByType("semantic") ?: emptyList()
+                            val stateHash = EpistemicLedger.calculateStateHash(recentMemories + newMemories)
+                            
+                            val snapshot = com.example.llmapp.core.database.CognitiveSnapshotEntity(
+                                sessionId = sessionId,
+                                epistemicStateHash = stateHash,
+                                version = 1
+                            )
+
+                            // Execute Atomic Transaction using Room's native coroutine extension
+                            chatDatabase?.withTransaction {
+                                if (newMemories.isNotEmpty()) cognitiveStateDao?.insertMemories(newMemories)
+                                if (newGoals.isNotEmpty()) cognitiveStateDao?.insertGoals(newGoals)
+                                cognitiveStateDao?.insertSnapshot(snapshot)
+                            }
+                            Log.d("CognitiveTaskScheduler", "Atomic state committed successfully: \$stateHash")
+                            
+                        } catch (e: Exception) {
+                            Log.e("CognitiveTaskScheduler", "CRITICAL: Atomic State Transaction Failed!", e)
+                            emit(CognitiveEvent.RuntimeEvent.Error(
+                                CognitiveError.StateCorruptionError("Failed to commit cognitive state: \${e.message}"),
+                                event.generationId
+                            ))
+                        }
+                    }
                 }
             }
             is CognitiveEvent.RuntimeEvent.Error -> {

@@ -19,7 +19,7 @@ import java.util.UUID
  */
 class ChatHistoryManager(val context: Context) {
 
-    private val database = ChatDatabase.getDatabase(context)
+    val database = ChatDatabase.getDatabase(context)
     private val dao = database.chatDao()
 
     fun chatDao() = dao

@@ -115,6 +115,13 @@ class ChatViewModel : ViewModel() {
     var historyManager: ChatHistoryManager? = null
         set(value) {
             field = value
+            val hMgr = value ?: return
+            
+            cognitiveTaskScheduler.chatDatabase = hMgr.database
+            cognitiveTaskScheduler.cognitiveStateDao = hMgr.database.cognitiveStateDao()
+            cognitiveTaskScheduler.snapshotDao = hMgr.database.snapshotDao()
+            cognitiveTaskScheduler.chatDao = hMgr.chatDao()
+
             refreshSessions()
             settingsManager?.let { initializeRetrieval(it) }
         }

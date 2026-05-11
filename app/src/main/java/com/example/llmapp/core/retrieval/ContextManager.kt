@@ -39,7 +39,10 @@ class ContextManager(
     ): String {
 
         // 1. Retrieve semantically relevant memories from local DB
-        val memories = hybridRetriever.retrieveRelevance(query)
+        val rawMemories = hybridRetriever.retrieveRelevance(query)
+        
+        // Apply Epistemic Governance Policies (masking CONTRADICTED, adding ASSUMED uncertainty)
+        val governedMemories = com.example.llmapp.core.governance.GovernancePolicyEngine.evaluateRetrievalContext(rawMemories)
 
         val sb = StringBuilder()
 
@@ -80,10 +83,10 @@ class ContextManager(
         }
 
         // ── Relevant memories ─────────────────────────────────────────────────
-        if (memories.isNotEmpty()) {
+        if (governedMemories.isNotEmpty()) {
             sb.append("## Relevant Context from Memory\n")
-            memories.forEach { memory ->
-                sb.append("- ${memory.content}\n")
+            governedMemories.forEach { memoryStr ->
+                sb.append("- $memoryStr\n")
             }
             sb.append("\n")
         }

@@ -14,7 +14,7 @@ import androidx.room.RoomDatabase
         GoalEntity::class,
         CognitiveSnapshotEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {

@@ -48,6 +48,11 @@ class ContextManager(
 
         // ── System turn ───────────────────────────────────────────────────────
         sb.append("<start_of_turn>user\n")
+        
+        // 0. The Immutable Constitution (Highest Priority)
+        sb.append(com.example.llmapp.core.governance.ConstitutionalPrinciples.CORE_CONSTITUTION)
+        sb.append("\n\n")
+        
         sb.append(systemPrompt.trim())
         sb.append("\n\n")
 

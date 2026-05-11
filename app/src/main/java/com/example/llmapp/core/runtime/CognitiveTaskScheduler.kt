@@ -154,6 +154,20 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 tokenBuffer.append(event.token)
                 val raw = tokenBuffer.toString()
                 
+                // 1. Constitutional Output Validation
+                try {
+                    com.example.llmapp.core.governance.ConstitutionalValidator.validateStream(raw)
+                } catch (e: IllegalStateException) {
+                    Log.e("CognitiveTaskScheduler", "CONSTITUTIONAL VIOLATION: \${e.message}")
+                    activeJob?.cancel()
+                    _state.value = _state.value.copy(phase = ExecutionPhase.IDLE)
+                    emit(CognitiveEvent.RuntimeEvent.Error(
+                        CognitiveError.ConstitutionalViolationError(e.message ?: "Unknown Violation"),
+                        event.generationId
+                    ))
+                    return
+                }
+                
                 // Sentinel detection (Web Search Tool)
                 val sentinelMatch = SENTINEL_REGEX.find(raw)
                 val refusalPhrases = listOf(

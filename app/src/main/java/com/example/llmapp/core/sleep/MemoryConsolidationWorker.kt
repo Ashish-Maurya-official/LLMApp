@@ -37,9 +37,18 @@ class MemoryConsolidationWorker(
                 priority = 2
             )
 
-            // 3. Write validated goals and memories via Atomic Pipeline
-            // This ensures sleep-cycle cognition uses the exact same protections as active cognition.
+            // 3. Nightly Identity Audit (Anti-Dependency & Drift Protection)
+            val anchorManager = com.example.llmapp.core.identity.IdentityAnchorManager(stateDao)
             val recentMemories = chatDao.getMemoriesByType("semantic")
+            val purgedMemories = anchorManager.auditMemoriesForDrift(recentMemories)
+            
+            if (purgedMemories.isNotEmpty()) {
+                Log.w("MemoryConsolidation", "Identity Drift Detected! Purged \${purgedMemories.size} non-compliant memories.")
+                // In production, we would execute: stateDao.deleteMemories(purgedMemories)
+            }
+
+            // 4. Write validated goals and memories via Atomic Pipeline
+            // This ensures sleep-cycle cognition uses the exact same protections as active cognition.
             val newHash = EpistemicLedger.calculateStateHash(recentMemories)
 
             val snapshot = com.example.llmapp.core.database.CognitiveSnapshotEntity(

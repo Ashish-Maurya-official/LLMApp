@@ -130,6 +130,22 @@ class ChatViewModel : ViewModel() {
                 voiceInteractionManager?.events?.collect { handleVoiceEvent(it) }
             }
 
+            // Initialize Identity Anchor Manager
+            identityAnchorManager = com.example.llmapp.core.identity.IdentityAnchorManager(hMgr.database.cognitiveStateDao())
+            
+            // Collect Entropy Events
+            viewModelScope.launch {
+                contextEntropyMonitor.entropyEvents.collect {
+                    // Flush Context (Start new session)
+                    val newSessionId = System.currentTimeMillis().toString()
+                    val sysEvent = ChatMessage(text = "[SYSTEM: Context collapsed due to high topic entropy. Memory flushed.]", isUser = false)
+                    allMessages.clear()
+                    allMessages.add(sysEvent)
+                    pushMessages()
+                    currentSessionId = newSessionId
+                }
+            }
+
             refreshSessions()
             settingsManager?.let { initializeRetrieval(it) }
         }
@@ -171,6 +187,10 @@ class ChatViewModel : ViewModel() {
 
     val intentThreadManager = com.example.llmapp.core.regulation.IntentThreadManager()
     val socioCognitiveRegulator = com.example.llmapp.core.regulation.SocioCognitiveRegulator()
+    val contextEntropyMonitor = com.example.llmapp.core.identity.ContextEntropyMonitor()
+    
+    var identityAnchorManager: com.example.llmapp.core.identity.IdentityAnchorManager? = null
+        private set
 
     val cognitiveTaskScheduler = com.example.llmapp.core.runtime.CognitiveTaskScheduler(viewModelScope)
 
@@ -434,6 +454,7 @@ class ChatViewModel : ViewModel() {
         if (text.isBlank() || _uiState.value.isGenerating) return
         
         socioCognitiveRegulator.recordUserInteraction()
+        contextEntropyMonitor.analyzeEntropy(text)
         
         currentUserQuery = text
 
@@ -462,6 +483,7 @@ class ChatViewModel : ViewModel() {
     private fun buildPromptFromHistory(pendingUserText: String): String {
         val systemPrompt = buildSystemPrompt()
         val regulatoryPrompt = socioCognitiveRegulator.generateRegulatoryPrompt()
+        val antiDependencyPrompt = identityAnchorManager?.checkAntiDependencyProtocol(pendingUserText) ?: ""
         
         val suspended = intentThreadManager.popNextIntent()
         val suspendedPrompt = if (suspended != null) {
@@ -473,6 +495,7 @@ class ChatViewModel : ViewModel() {
         sb.append("<start_of_turn>user\n")
         sb.append(systemPrompt)
         sb.append(regulatoryPrompt)
+        sb.append(antiDependencyPrompt)
         sb.append(suspendedPrompt)
         sb.append("\n\n## WEB SEARCH TOOL\n")
         sb.append("You have access to a real-time web search tool.\n")

@@ -150,7 +150,15 @@ class ChatViewModel : ViewModel() {
         if (File(modelPath).exists() && File(vocabPath).exists()) em.initialize(modelPath, vocabPath)
         embeddingManager = em
         hybridRetriever = com.example.llmapp.core.retrieval.HybridRetriever(hMgr.chatDao(), em)
+        
+        // Initialize Evaluation Runner once Retriever is ready
+        llmInferenceManager?.let { inferenceManager ->
+            evaluationRunner = com.example.llmapp.core.evaluation.EvaluationRunner(hMgr.database, hybridRetriever!!, inferenceManager)
+        }
     }
+
+    var evaluationRunner: com.example.llmapp.core.evaluation.EvaluationRunner? = null
+        private set
 
     val cognitiveTaskScheduler = com.example.llmapp.core.runtime.CognitiveTaskScheduler(viewModelScope)
 
@@ -169,11 +177,19 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    // ── LLM inference ────────────────────────────────────────────────────────
     var llmInferenceManager: LlmInferenceManager? = null
         set(value) {
             field = value
             cognitiveTaskScheduler.llmInferenceManager = value
+            
+            // Wire EvaluationRunner
+            historyManager?.let { hMgr ->
+                hybridRetriever?.let { retriever ->
+                    value?.let { inferenceManager ->
+                        evaluationRunner = com.example.llmapp.core.evaluation.EvaluationRunner(hMgr.database, retriever, inferenceManager)
+                    }
+                }
+            }
         }
 
     // ── Parsing ──────────────────────────────────────────────────────────────

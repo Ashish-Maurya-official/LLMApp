@@ -16,4 +16,7 @@ interface CognitiveStateDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertSnapshot(snapshot: CognitiveSnapshotEntity): Long
+    
+    @androidx.room.Query("DELETE FROM memories WHERE sessionId = :sessionId")
+    fun deleteMemoriesBySession(sessionId: String)
 }

@@ -229,7 +229,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                             composable("models") {
-                                ModelScreen(
+                                com.example.llmapp.ui.models.ModelScreen(
                                     modelDownloader = modelDownloader,
                                     onModelSelected = { path ->
                                         initModel(path)
@@ -239,8 +239,17 @@ class MainActivity : ComponentActivity() {
                                             restoreState = true
                                         }
                                     },
-                                    openDrawer = { scope.launch { drawerState.open() } }
+                                    openDrawer = { scope.launch { drawerState.open() } },
+                                    onOpenEvaluation = { navController.navigate("evaluation") }
                                 )
+                            }
+                            composable("evaluation") {
+                                viewModel.evaluationRunner?.let { runner ->
+                                    com.example.llmapp.ui.evaluation.EvaluationScreen(
+                                        runner = runner,
+                                        onBack = { navController.popBackStack() }
+                                    )
+                                }
                             }
                             composable("history") {
                                 HistoryScreen(

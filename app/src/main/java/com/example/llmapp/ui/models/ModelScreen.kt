@@ -95,7 +95,8 @@ suspend fun fetchRemoteModels(): List<AvailableModel>? = withContext(Dispatchers
 fun ModelScreen(
     modelDownloader: ModelDownloader,
     onModelSelected: (String) -> Unit,
-    openDrawer: () -> Unit
+    openDrawer: () -> Unit,
+    onOpenEvaluation: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
     var models by remember { mutableStateOf(fallbackModels) }
@@ -183,6 +184,14 @@ fun ModelScreen(
                     } else if (catalogSource.isNotEmpty()) {
                         Spacer(Modifier.height(4.dp))
                         Text(catalogSource, fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                    }
+                    
+                    Spacer(Modifier.height(16.dp))
+                    Button(
+                        onClick = onOpenEvaluation,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Run Cognitive Benchmark (Phase 7)")
                     }
                 }
             }

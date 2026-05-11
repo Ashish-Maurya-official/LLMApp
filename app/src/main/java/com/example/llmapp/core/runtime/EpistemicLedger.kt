@@ -25,4 +25,18 @@ object EpistemicLedger {
         val hashBytes = digest.digest(stateString.toByteArray())
         return hashBytes.joinToString("") { "%02x".format(it) }
     }
+
+    /**
+     * Called at OS Boot. Reads the latest Snapshot hash and compares it against 
+     * a fresh hash of the current memories. If they don't match, it means the database 
+     * was corrupted or tampered with offline. Returns true if stable, false if corrupted.
+     */
+    fun validateLedgerIntegrity(
+        memories: List<MemoryEntity>, 
+        latestSnapshot: com.example.llmapp.core.database.CognitiveSnapshotEntity?
+    ): Boolean {
+        if (latestSnapshot == null) return true // Fresh install
+        val currentHash = calculateStateHash(memories)
+        return currentHash == latestSnapshot.epistemicStateHash
+    }
 }

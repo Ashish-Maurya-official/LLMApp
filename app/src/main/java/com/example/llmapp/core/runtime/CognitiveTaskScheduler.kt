@@ -24,6 +24,8 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
     var cognitiveStateDao: com.example.llmapp.core.database.CognitiveStateDao? = null
     var snapshotDao: com.example.llmapp.core.database.SnapshotDao? = null
     var chatDao: com.example.llmapp.core.database.ChatDao? = null
+    var replayTracer: com.example.llmapp.core.telemetry.ReplayTracer? = null
+    var equilibriumMonitor: com.example.llmapp.core.telemetry.EquilibriumMonitor? = null
 
     var llmInferenceManager: com.example.llmapp.core.inference.LlmInferenceManager? = null
         set(value) {
@@ -203,16 +205,43 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
 
                             // Execute Atomic Transaction using Room's native coroutine extension
                             chatDatabase?.withTransaction {
-                                if (newMemories.isNotEmpty()) cognitiveStateDao?.insertMemories(newMemories)
+                                if (newMemories.isNotEmpty()) {
+                                    val safeToProceed = equilibriumMonitor?.logMemoryMutation() ?: true
+                                    if (safeToProceed) {
+                                        cognitiveStateDao?.insertMemories(newMemories)
+                                    } else {
+                                        // Emit an Error to trigger cool-down if stuck in a hallucination loop
+                                        throw IllegalStateException("Equilibrium Mutability Threshold Exceeded")
+                                    }
+                                }
                                 if (newGoals.isNotEmpty()) cognitiveStateDao?.insertGoals(newGoals)
                                 cognitiveStateDao?.insertSnapshot(snapshot)
                             }
                             Log.d("CognitiveTaskScheduler", "Atomic state committed successfully: \$stateHash")
                             
+                            // Log Trace
+                            replayTracer?.logEvent(
+                                com.example.llmapp.core.telemetry.TraceEvent.MemoryCommit(
+                                    generationId = sessionId,
+                                    memoriesInserted = newMemories.size,
+                                    epistemicHash = stateHash
+                                )
+                            )
+                            
                         } catch (e: Exception) {
                             Log.e("CognitiveTaskScheduler", "CRITICAL: Atomic State Transaction Failed!", e)
+                            
+                            val errorMessage = e.message ?: "Unknown Transaction Failure"
+                            replayTracer?.logEvent(
+                                com.example.llmapp.core.telemetry.TraceEvent.Error(
+                                    generationId = _state.value.activeGenerationId,
+                                    errorType = "StateCorruptionError",
+                                    message = errorMessage
+                                )
+                            )
+                            
                             emit(CognitiveEvent.RuntimeEvent.Error(
-                                CognitiveError.StateCorruptionError("Failed to commit cognitive state: \${e.message}"),
+                                CognitiveError.StateCorruptionError("Failed to commit cognitive state: \$errorMessage"),
                                 event.generationId
                             ))
                         }

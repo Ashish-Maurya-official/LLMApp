@@ -121,6 +121,8 @@ class ChatViewModel : ViewModel() {
             cognitiveTaskScheduler.cognitiveStateDao = hMgr.database.cognitiveStateDao()
             cognitiveTaskScheduler.snapshotDao = hMgr.database.snapshotDao()
             cognitiveTaskScheduler.chatDao = hMgr.chatDao()
+            cognitiveTaskScheduler.replayTracer = com.example.llmapp.core.telemetry.ReplayTracer(hMgr.context)
+            cognitiveTaskScheduler.equilibriumMonitor = com.example.llmapp.core.telemetry.EquilibriumMonitor()
 
             refreshSessions()
             settingsManager?.let { initializeRetrieval(it) }

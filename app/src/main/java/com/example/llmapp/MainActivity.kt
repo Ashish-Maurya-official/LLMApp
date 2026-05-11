@@ -88,6 +88,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Schedule the Cognitive Sleep Cycle (WorkManager)
+        com.example.llmapp.core.sleep.SleepCycleScheduler.scheduleSleepCycle(this)
+
         setContent {
             val themePref by viewModel.themePreference.collectAsState()
             val isDark = when (themePref) {

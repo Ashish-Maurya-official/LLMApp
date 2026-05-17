@@ -346,6 +346,10 @@ fun ChatScreen(
         requestMicPermission("voice_mode")
     }
 
+    // Root box so VoiceConversationOverlay can be positioned absolutely
+    // over the ENTIRE screen (including top bar / status bar).
+    Box(modifier = Modifier.fillMaxSize()) {
+
     Scaffold(
         modifier = Modifier.pointerInput(Unit) {
             detectTapGestures(onTap = { focusManager.clearFocus() })
@@ -725,24 +729,7 @@ fun ChatScreen(
                 }
             }
         }
-
-        // Voice Mode Full-Screen Overlay
-        if (uiState.isVoiceModeActive) {
-            VoiceConversationOverlay(
-                voiceState = uiState.voiceState,
-                partialTranscript = uiState.partialTranscript,
-                onInterrupt = {
-                    voiceManager.interrupt()
-                    onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
-                },
-                onDismiss = {
-                    voiceManager.interrupt()
-                    voiceManager.isVoiceModeActive = false
-                    voiceManager.stopListening()
-                    onIntent(ChatIntent.DeactivateVoiceMode)
-                }
-            )
-        }
+    } // end Column
 
         // Loading Overlay
         if (uiState.isLoadingModel) {
@@ -770,9 +757,30 @@ fun ChatScreen(
                 }
             }
         }
+    } // end outer Box (innerPadding)
+    } // end Scaffold
+
+    // ── Absolute full-screen Voice Mode overlay ────────────────────────────
+    // Placed OUTSIDE the Scaffold so it covers 100% of screen,
+    // including the TopAppBar and status bar area.
+    if (uiState.isVoiceModeActive) {
+        VoiceConversationOverlay(
+            voiceState = uiState.voiceState,
+            partialTranscript = uiState.partialTranscript,
+            onInterrupt = {
+                voiceManager.interrupt()
+                onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
+            },
+            onDismiss = {
+                voiceManager.interrupt()
+                voiceManager.isVoiceModeActive = false
+                voiceManager.stopListening()
+                onIntent(ChatIntent.DeactivateVoiceMode)
+            }
+        )
     }
-}
-}
+
+    } // end root Box
 }
 
 @Composable

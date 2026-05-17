@@ -150,7 +150,9 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 }
             }
             is CognitiveEvent.ToolEvent.SearchCompleted -> {
-                Log.d("CognitiveTaskScheduler", "Tool Search Completed, Resuming LLM")
+                Log.d("CognitiveTaskScheduler", "SearchCompleted: resetting phase to IDLE for re-generation.")
+                // Reset phase so the sentinel loop guard allows processing the new generation cleanly.
+                _state.value = _state.value.copy(phase = ExecutionPhase.IDLE)
             }
 
             is CognitiveEvent.SystemEvent.TelemetryUpdated -> {
@@ -206,17 +208,16 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 }
                 
                 // Sentinel detection (Web Search Tool)
+                // ONLY trigger on the explicit [SEARCH_NEEDED] token — never on refusal phrases.
+                // Refusal phrases fire on EVERY response (including post-search ones), causing
+                // an infinite loop: LLM -> refusal detected -> search -> LLM -> refusal detected -> ...
                 val sentinelMatch = SENTINEL_REGEX.find(raw)
-                val refusalPhrases = listOf(
-                    "I do not have access to the internet", "I cannot access the internet",
-                    "I don't have access to the internet", "I cannot browse",
-                    "I don't have real-time", "I do not have real-time"
-                )
-                val needsSearch = sentinelMatch != null || refusalPhrases.any { raw.contains(it, ignoreCase = true) }
+                val needsSearch = sentinelMatch != null
                 
+                // Loop guard: only trigger if we are NOT already mid-retrieval
                 if (needsSearch && _state.value.phase != ExecutionPhase.RETRIEVING) {
-                    val extractedQuery = sentinelMatch?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() } ?: ""
-                    Log.d("CognitiveTaskScheduler", "Sentinel detected. Preempting generation for query: $extractedQuery")
+                    val extractedQuery = sentinelMatch!!.groupValues.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() } ?: ""
+                    Log.d("CognitiveTaskScheduler", "[SEARCH_NEEDED] sentinel detected. Query: '$extractedQuery'")
                     
                     // Stop LLM immediately
                     activeJob?.cancel()

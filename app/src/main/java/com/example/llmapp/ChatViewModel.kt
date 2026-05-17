@@ -408,9 +408,13 @@ class ChatViewModel : ViewModel() {
         }
         _streamingState.value = _streamingState.value.copy(actions = actions)
 
-        // Let the scheduler know search is complete
+        // Let the scheduler know search is complete so it resets RETRIEVING phase → IDLE
         cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ToolEvent.SearchCompleted(llmText, genId))
-        
+
+        // Now re-trigger generation with the search results injected into the prompt.
+        // A new GenerationRequested will reset the tokenBuffer inside the scheduler,
+        // so the sentinel detector won't fire again on the new response.
+        Log.d("ChatViewModel", "Web search complete. Re-generating with injected context.")
         _uiState.update { it.copy(isGenerating = true) }
         val promptWithContext = buildPromptWithContext(currentUserQuery, llmText)
         cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(currentUserQuery, promptWithContext, genId))
@@ -614,10 +618,14 @@ class ChatViewModel : ViewModel() {
 
     private fun buildPromptWithContext(userText: String, searchContext: String): String {
         val sb = StringBuilder()
+        val searchCap = (settingsManager?.maxTokens ?: 1024) * 3
+
+        // ── System context (no search tool instruction — search is already done) ──
         sb.append("<start_of_turn>user\n")
         sb.append(buildSystemPrompt())
-        sb.append("<end_of_turn>\n<start_of_turn>model\nSure, I am ready to help!<end_of_turn>\n")
+        sb.append("<end_of_turn>\n<start_of_turn>model\nUnderstood. I am ready to help.<end_of_turn>\n")
 
+        // ── Conversation history ───────────────────────────────────────────────
         val limit = if (activeDegradationLevel >= com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.SUMMARIZE_CONTEXT) 3 else (settingsManager?.contextLimit ?: 10)
         val msgCap = perMessageCharCap()
         allMessages.dropLast(1).takeLast(limit).forEach { msg ->
@@ -626,13 +634,23 @@ class ChatViewModel : ViewModel() {
             else sb.append("<start_of_turn>model\n$content<end_of_turn>\n")
         }
 
-        val searchCap = (settingsManager?.maxTokens ?: 1024) * 3
+        // ── Forceful search result injection ─────────────────────────────────
+        // This is the critical turn: the LLM MUST treat the results as authoritative live data.
         sb.append("<start_of_turn>user\n")
-        sb.append("The following web search results were retrieved to help answer the question. The user CANNOT see these results — only your reply is shown.\n\n")
-        sb.append("=== SEARCH RESULTS START ===\n${searchContext.take(searchCap)}\n=== SEARCH RESULTS END ===\n\n")
-        sb.append("USER'S QUESTION: $userText\n\n")
-        sb.append("Rules: (1) Extract only info that answers the question. (2) Do NOT mention 'search results'. (3) Include specific facts (numbers, dates). (4) Do NOT output [SEARCH_NEEDED: ...]. (5) Format with Markdown.\n")
+        sb.append("SYSTEM: A real-time web search has already been performed on your behalf.\n")
+        sb.append("The results below are LIVE data retrieved from the internet RIGHT NOW.\n")
+        sb.append("You MUST use this data to answer the user's question. These results exist.\n")
+        sb.append("ABSOLUTE RULES:\n")
+        sb.append("  - DO NOT say 'I do not have real-time access' or 'I cannot browse' — you have the data below.\n")
+        sb.append("  - DO NOT output [SEARCH_NEEDED: ...] — the search is complete.\n")
+        sb.append("  - DO extract specific facts (temperatures, numbers, dates) from the results.\n")
+        sb.append("  - DO answer naturally as if you knew the information, without mentioning 'search results'.\n")
+        sb.append("\n=== LIVE SEARCH DATA START ===\n")
+        sb.append(searchContext.take(searchCap))
+        sb.append("\n=== LIVE SEARCH DATA END ===\n\n")
+        sb.append("User's question: $userText\n")
         sb.append("<end_of_turn>\n<start_of_turn>model\n")
+
         return sb.toString()
     }
 

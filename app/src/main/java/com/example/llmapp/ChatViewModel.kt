@@ -5,11 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.example.llmapp.core.history.ChatHistoryManager
 import com.example.llmapp.core.inference.LlmInferenceManager
 import com.example.llmapp.core.settings.SettingsManager
-import com.example.llmapp.ui.state.ChatIntent
-import com.example.llmapp.ui.state.ChatUiState
-import com.example.llmapp.ui.state.StreamingSegment
-import com.example.llmapp.ui.state.StreamingState
-import com.example.llmapp.ui.state.VoiceState
+import com.example.llmapp.ui.chat.state.ChatIntent
+import com.example.llmapp.ui.chat.state.ChatUiState
+import com.example.llmapp.ui.chat.state.StreamingSegment
+import com.example.llmapp.ui.chat.state.StreamingState
+import com.example.llmapp.ui.chat.state.VoiceState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

@@ -35,7 +35,7 @@ import com.example.llmapp.ui.chat.ChatScreen
 import com.example.llmapp.ui.models.ModelScreen
 import com.example.llmapp.ui.settings.SettingsScreen
 import com.example.llmapp.ui.history.HistoryScreen
-import com.example.llmapp.ui.state.ChatIntent
+import com.example.llmapp.ui.chat.state.ChatIntent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

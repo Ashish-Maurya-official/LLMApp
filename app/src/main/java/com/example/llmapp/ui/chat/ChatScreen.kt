@@ -711,7 +711,7 @@ fun ChatScreen(
                         Surface(
                             onClick = { 
                                 focusManager.clearFocus()
-                                onIntent(ChatIntent.ActivateVoiceMode) 
+                                requestMicPermission("voice_mode")
                             },
                             modifier = Modifier.size(32.dp),
                             shape = CircleShape,

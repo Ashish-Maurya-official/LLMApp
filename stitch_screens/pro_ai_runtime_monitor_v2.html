@@ -1,0 +1,388 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>AI Runtime Monitor | Pro Profiler</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<style>
+        :root {
+            --bg-pro: #09090b;
+            --border-pro: rgba(255, 255, 255, 0.06);
+            --success: #10b981;
+            --warning: #f59e0b;
+            --critical: #ef4444;
+        }
+        body {
+            background-color: var(--bg-pro);
+            color: #e5e2e3;
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .pro-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 0.5px solid var(--border-pro);
+            border-radius: 2px;
+        }
+        .status-led {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+        .led-success { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
+        .led-warning { background-color: var(--warning); box-shadow: 0 0 8px var(--warning); }
+        .grid-heatmap {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2px;
+        }
+        .heatmap-cell { height: 12px; border-radius: 1px; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              colors: {
+                primary: "#adc6ff",
+                secondary: "#d1bcff",
+                surface: "#131314",
+                "on-surface": "#e5e2e3",
+                "on-surface-variant": "#c1c6d7",
+                "surface-container": "#18181b",
+              }
+            }
+          }
+        }
+    </script>
+</head>
+<body class="bg-[#09090b] text-on-surface selection:bg-primary/30">
+<!-- TopAppBar -->
+<header class="bg-[#09090b]/80 backdrop-blur-md sticky top-0 z-50 border-b border-white/5 flex items-center justify-between px-4 h-12 w-full">
+<div class="flex items-center gap-3">
+<button class="hover:bg-white/5 transition-colors p-1 rounded transition-all active:scale-95">
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant">arrow_back</span>
+</button>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="text-[12px] font-bold tracking-tight uppercase text-on-surface">AI Runtime Monitor</span>
+<div class="status-led led-success animate-pulse"></div>
+</div>
+<div class="flex items-center gap-2">
+<span class="mono text-[10px] text-on-surface-variant tracking-widest uppercase">Live Telemetry</span>
+<span class="mono text-[10px] text-primary/70" id="live-clock">14:12:16.94</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="hidden sm:flex items-center gap-2 px-2 py-0.5 border border-white/5 bg-white/5 rounded">
+<span class="mono text-[10px] text-on-surface-variant">BUFFER:</span>
+<span class="mono text-[10px] text-success">98.2%</span>
+</div>
+<button class="hover:bg-white/5 transition-colors p-1 rounded transition-all active:scale-95">
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant">more_vert</span>
+</button>
+</div>
+</header>
+<main class="p-3 space-y-3 pb-24 max-w-7xl mx-auto">
+<!-- Header: System Health Miniature -->
+<section class="pro-card p-3 flex flex-wrap items-center justify-between gap-4">
+<div class="flex items-center gap-6">
+<div>
+<p class="mono text-[10px] text-on-surface-variant mb-1">SYSTEM HEALTH</p>
+<div class="flex items-center gap-2">
+<span class="mono text-lg font-bold text-success">92.4%</span>
+<svg class="w-16 h-4 text-success" preserveAspectRatio="none">
+<path d="M0 15 L5 12 L10 14 L15 8 L20 10 L25 5 L30 7 L35 2 L40 6 L45 3 L50 8 L55 4 L60 6" fill="none" stroke="currentColor" stroke-width="1.5"></path>
+</svg>
+</div>
+</div>
+<div class="h-8 w-px bg-white/10"></div>
+<div>
+<p class="mono text-[10px] text-on-surface-variant mb-1">MODEL INSTANCE</p>
+<div class="flex items-center gap-2">
+<span class="mono text-[11px] font-bold">GEMMA-3B-IT</span>
+<span class="text-[9px] px-1.5 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-sm">Q4_K_M</span>
+</div>
+</div>
+</div>
+<div class="flex gap-4">
+<div class="text-right">
+<p class="mono text-[10px] text-on-surface-variant mb-1">VULKAN API</p>
+<p class="mono text-[11px] text-success">CONNECTED</p>
+</div>
+<div class="text-right">
+<p class="mono text-[10px] text-on-surface-variant mb-1">UPTIME</p>
+<p class="mono text-[11px]">04:12:09</p>
+</div>
+</div>
+</section>
+<!-- Main Analytics Grid -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+<!-- Inference Performance -->
+<section class="md:col-span-8 pro-card p-4">
+<div class="flex justify-between items-center mb-4">
+<h3 class="mono text-[11px] font-bold tracking-widest text-on-surface flex items-center gap-2 uppercase">
+<span class="material-symbols-outlined text-[16px] text-primary">analytics</span> Inference Stream
+                </h3>
+<div class="flex gap-3">
+<div class="flex items-center gap-1.5">
+<div class="w-2 h-2 rounded-sm bg-primary"></div>
+<span class="mono text-[10px] text-on-surface-variant">TOK/S</span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="w-2 h-2 rounded-sm bg-secondary"></div>
+<span class="mono text-[10px] text-on-surface-variant">LATENCY</span>
+</div>
+</div>
+</div>
+<div class="relative h-40 w-full bg-white/[0.01] border-l border-b border-white/10 mb-4">
+<!-- Mock Chart Grid -->
+<div class="absolute inset-0 grid grid-cols-8 grid-rows-4 pointer-events-none">
+<div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div>
+<div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div>
+<div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div>
+<div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div><div class="border-r border-t border-white/[0.03]"></div>
+</div>
+<!-- Line Chart Paths -->
+<svg class="absolute inset-0 w-full h-full">
+<path class="opacity-80" d="M0 120 Q 50 100, 100 80 T 200 60 T 300 40 T 400 30 T 500 45" fill="none" stroke="#adc6ff" stroke-width="1.5"></path>
+<path class="opacity-60" d="M0 140 Q 50 135, 100 138 T 200 130 T 300 135 T 400 132 T 500 136" fill="none" stroke="#d1bcff" stroke-width="1.5"></path>
+</svg>
+</div>
+<div class="grid grid-cols-3 gap-4">
+<div>
+<p class="mono text-[9px] text-on-surface-variant uppercase mb-1">Current</p>
+<p class="mono text-lg text-primary">18.25 <span class="text-[10px]">t/s</span></p>
+</div>
+<div>
+<p class="mono text-[9px] text-on-surface-variant uppercase mb-1">Latency P95</p>
+<p class="mono text-lg text-secondary">42.1 <span class="text-[10px]">ms</span></p>
+</div>
+<div>
+<p class="mono text-[9px] text-on-surface-variant uppercase mb-1">Queue Depth</p>
+<p class="mono text-lg">0.02 <span class="text-[10px]">avg</span></p>
+</div>
+</div>
+</section>
+<!-- Right Side: Alert & Thermals -->
+<div class="md:col-span-4 flex flex-col gap-3">
+<section class="pro-card p-4 border-[#f59e0b20] bg-[#f59e0b05]">
+<div class="flex items-center gap-2 mb-2">
+<span class="material-symbols-outlined text-warning text-[18px]">warning</span>
+<h3 class="mono text-[10px] font-bold text-warning uppercase">Context Exhaustion</h3>
+</div>
+<p class="text-[11px] text-on-surface/80 leading-relaxed mb-3">
+                    KV Cache at 94%. Performance degradation imminent.
+                </p>
+<button class="w-full py-1.5 border border-warning/30 hover:bg-warning/10 text-warning mono text-[10px] uppercase font-bold transition-all">
+                    Prune Context
+                </button>
+</section>
+<section class="pro-card p-4 flex-1">
+<div class="flex justify-between items-center mb-4">
+<h3 class="mono text-[10px] font-bold uppercase text-on-surface-variant">Thermal Map</h3>
+<span class="mono text-[10px] text-success">STABLE</span>
+</div>
+<div class="space-y-4">
+<div class="grid grid-cols-4 gap-1">
+<div class="heatmap-cell bg-primary/20"></div><div class="heatmap-cell bg-primary/30"></div><div class="heatmap-cell bg-secondary/40"></div><div class="heatmap-cell bg-primary/20"></div>
+<div class="heatmap-cell bg-primary/40"></div><div class="heatmap-cell bg-secondary/60"></div><div class="heatmap-cell bg-warning/40"></div><div class="heatmap-cell bg-secondary/30"></div>
+<div class="heatmap-cell bg-primary/20"></div><div class="heatmap-cell bg-primary/30"></div><div class="heatmap-cell bg-secondary/40"></div><div class="heatmap-cell bg-primary/20"></div>
+</div>
+<div class="grid grid-cols-2 gap-x-4 gap-y-2">
+<div class="flex justify-between items-center border-b border-white/5 pb-1">
+<span class="mono text-[9px] text-on-surface-variant">CPU</span>
+<span class="mono text-[10px]">42.5°C</span>
+</div>
+<div class="flex justify-between items-center border-b border-white/5 pb-1">
+<span class="mono text-[9px] text-on-surface-variant">GPU</span>
+<span class="mono text-[10px]">58.1°C</span>
+</div>
+<div class="flex justify-between items-center border-b border-white/5 pb-1">
+<span class="mono text-[9px] text-on-surface-variant">BATT</span>
+<span class="mono text-[10px]">34.0°C</span>
+</div>
+<div class="flex justify-between items-center border-b border-white/5 pb-1">
+<span class="mono text-[9px] text-on-surface-variant">NPU</span>
+<span class="mono text-[10px]">46.2°C</span>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>
+<!-- Hardware Row -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+<!-- CPU Cluster -->
+<section class="md:col-span-4 pro-card p-4">
+<h3 class="mono text-[10px] font-bold uppercase mb-4 text-on-surface-variant">Octa-Core Utilization</h3>
+<div class="space-y-2">
+<!-- Render 8 cores with tiny bars -->
+<div class="grid grid-cols-2 gap-x-6 gap-y-2">
+<div class="flex items-center gap-2">
+<span class="mono text-[9px] w-4 text-on-surface-variant">C0</span>
+<div class="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[85%]"></div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="mono text-[9px] w-4 text-on-surface-variant">C1</span>
+<div class="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[42%]"></div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="mono text-[9px] w-4 text-on-surface-variant">C2</span>
+<div class="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[70%]"></div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="mono text-[9px] w-4 text-on-surface-variant">C3</span>
+<div class="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[12%]"></div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="mono text-[9px] w-4 text-on-surface-variant">C4</span>
+<div class="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[95%]"></div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="mono text-[9px] w-4 text-on-surface-variant">C5</span>
+<div class="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[65%]"></div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="mono text-[9px] w-4 text-on-surface-variant">C6</span>
+<div class="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[30%]"></div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<span class="mono text-[9px] w-4 text-on-surface-variant">C7</span>
+<div class="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary/20 w-[5%]"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Memory Intelligence -->
+<section class="md:col-span-8 pro-card p-4">
+<h3 class="mono text-[10px] font-bold uppercase mb-4 text-on-surface-variant">Memory Segmentation</h3>
+<div class="space-y-5">
+<div>
+<div class="flex justify-between mono text-[10px] mb-1.5">
+<span class="text-on-surface">VRAM (GEMMA-3B)</span>
+<span class="text-primary font-bold">4.2 GB / 6.0 GB</span>
+</div>
+<div class="flex h-2.5 gap-0.5">
+<div class="flex-1 bg-primary"></div><div class="flex-1 bg-primary"></div><div class="flex-1 bg-primary"></div><div class="flex-1 bg-primary"></div>
+<div class="flex-1 bg-primary"></div><div class="flex-1 bg-primary/80"></div><div class="flex-1 bg-primary/60"></div><div class="flex-1 bg-white/5"></div>
+<div class="flex-1 bg-white/5"></div><div class="flex-1 bg-white/5"></div>
+</div>
+</div>
+<div>
+<div class="flex justify-between mono text-[10px] mb-1.5">
+<span class="text-on-surface">SYSTEM RAM</span>
+<span class="text-secondary font-bold">2.8 GB / 12.0 GB</span>
+</div>
+<div class="flex h-2.5 gap-0.5">
+<div class="flex-1 bg-secondary"></div><div class="flex-1 bg-secondary"></div><div class="flex-1 bg-secondary/60"></div><div class="flex-1 bg-white/5"></div>
+<div class="flex-1 bg-white/5"></div><div class="flex-1 bg-white/5"></div><div class="flex-1 bg-white/5"></div><div class="flex-1 bg-white/5"></div>
+<div class="flex-1 bg-white/5"></div><div class="flex-1 bg-white/5"></div>
+</div>
+</div>
+<div class="flex items-center gap-3 py-2 px-3 bg-white/[0.03] border border-white/5 italic mono text-[9px] text-on-surface-variant">
+<span class="material-symbols-outlined text-[14px]">info</span>
+                    "High memory pressure detected on NPU partition. Swapping KV chunks to shared RAM."
+                </div>
+</div>
+</section>
+</div>
+<!-- Battery & Storage Summary -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+<section class="pro-card p-3 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-[20px]">bolt</span>
+<div>
+<p class="mono text-[9px] text-on-surface-variant">PWR DRAW</p>
+<p class="mono text-[12px] font-bold">4.21 W</p>
+</div>
+</div>
+<span class="mono text-[9px] text-success">NOMINAL</span>
+</section>
+<section class="pro-card p-3 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-secondary text-[20px]">database</span>
+<div>
+<p class="mono text-[9px] text-on-surface-variant">STORAGE</p>
+<p class="mono text-[12px] font-bold">12.2 GB</p>
+</div>
+</div>
+<span class="mono text-[9px] text-on-surface-variant">88% FREE</span>
+</section>
+<section class="pro-card p-3 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-warning text-[20px]">speed</span>
+<div>
+<p class="mono text-[9px] text-on-surface-variant">IOPS</p>
+<p class="mono text-[12px] font-bold">128.4k</p>
+</div>
+</div>
+<span class="mono text-[9px] text-warning">HIGH</span>
+</section>
+</div>
+<!-- Advanced Terminal -->
+
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 w-full z-50 bg-[#09090b]/90 backdrop-blur-xl border-t border-white/5 flex justify-around items-center h-16 px-2 pb-safe">
+<a class="flex flex-col items-center justify-center text-primary group transition-all" href="#">
+<div class="p-1 px-4 bg-primary/10 rounded border border-primary/20 group-active:scale-90 transition-transform">
+<span class="material-symbols-outlined text-[22px]" style="font-variation-settings: 'FILL' 1;">neurology</span>
+</div>
+<span class="mono text-[9px] font-bold mt-1 uppercase tracking-tighter">Inference</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-all group" href="#">
+<div class="p-1 px-4 group-active:scale-90 transition-transform">
+<span class="material-symbols-outlined text-[22px]">memory</span>
+</div>
+<span class="mono text-[9px] font-bold mt-1 uppercase tracking-tighter">Hardware</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-all group" href="#">
+<div class="p-1 px-4 group-active:scale-90 transition-transform">
+<span class="material-symbols-outlined text-[22px]">terminal</span>
+</div>
+<span class="mono text-[9px] font-bold mt-1 uppercase tracking-tighter">Logs</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary transition-all group" href="#">
+<div class="p-1 px-4 group-active:scale-90 transition-transform">
+<span class="material-symbols-outlined text-[22px]">settings</span>
+</div>
+<span class="mono text-[9px] font-bold mt-1 uppercase tracking-tighter">Settings</span>
+</a>
+</nav>
+<script>
+    // Live clock simulator
+    function updateClock() {
+        const now = new Date();
+        const timeStr = now.getHours().toString().padStart(2, '0') + ':' +
+                        now.getMinutes().toString().padStart(2, '0') + ':' +
+                        now.getSeconds().toString().padStart(2, '0') + '.' +
+                        Math.floor(now.getMilliseconds() / 10).toString().padStart(2, '0');
+        document.getElementById('live-clock').textContent = timeStr;
+    }
+    setInterval(updateClock, 30);
+</script>
+
+
+</body></html>

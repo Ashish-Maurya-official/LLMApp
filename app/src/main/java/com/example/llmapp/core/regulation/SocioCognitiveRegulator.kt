@@ -44,11 +44,7 @@ class SocioCognitiveRegulator {
      * Determines if an artificial delay should be introduced to mimic human pondering.
      */
     fun calculatePacingDelayMs(): Long {
-        return when (_urgencyState.value) {
-            UrgencyLevel.CASUAL -> 1200L // Relaxed 1.2s delay
-            UrgencyLevel.ACTIVE -> 400L  // Slight pause
-            UrgencyLevel.URGENT -> 0L    // Instant response, no delay
-        }
+        return 0L // Removed artificial pacing for instant responsiveness
     }
 
     /**

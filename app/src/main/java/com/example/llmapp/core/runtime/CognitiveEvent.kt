@@ -32,7 +32,7 @@ sealed interface CognitiveEvent {
     // Runtime Events
     sealed interface RuntimeEvent : CognitiveEvent {
         val generationId: String
-        data class GenerationRequested(val prompt: String, override val generationId: String, override val timestamp: Long = System.currentTimeMillis()) : RuntimeEvent
+        data class GenerationRequested(val rawQuery: String, val prompt: String, override val generationId: String, override val timestamp: Long = System.currentTimeMillis()) : RuntimeEvent
         data class TokenEmitted(val token: String, val isDone: Boolean, override val generationId: String, override val timestamp: Long = System.currentTimeMillis()) : RuntimeEvent
         data class GenerationComplete(override val generationId: String, override val timestamp: Long = System.currentTimeMillis()) : RuntimeEvent
         data class StopGeneration(override val generationId: String, override val timestamp: Long = System.currentTimeMillis()) : RuntimeEvent

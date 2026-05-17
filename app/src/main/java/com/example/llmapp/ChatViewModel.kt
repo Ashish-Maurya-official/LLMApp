@@ -209,16 +209,23 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    var memoryConsolidator: com.example.llmapp.core.history.MemoryConsolidator? = null
+
     var llmInferenceManager: LlmInferenceManager? = null
         set(value) {
             field = value
             cognitiveTaskScheduler.llmInferenceManager = value
             
-            // Wire EvaluationRunner
+            // Wire EvaluationRunner and MemoryConsolidator
             historyManager?.let { hMgr ->
                 hybridRetriever?.let { retriever ->
                     value?.let { inferenceManager ->
                         evaluationRunner = com.example.llmapp.core.evaluation.EvaluationRunner(hMgr.database, retriever, inferenceManager)
+                        memoryConsolidator = com.example.llmapp.core.history.MemoryConsolidator(
+                            viewModelScope,
+                            inferenceManager,
+                            hMgr.database.cognitiveStateDao()
+                        )
                     }
                 }
             }
@@ -296,6 +303,11 @@ class ChatViewModel : ViewModel() {
                 viewModelScope.launch(Dispatchers.IO) {
                     historyManager?.saveSession(currentSessionId, snapshot)
                     withContext(Dispatchers.Main) { refreshSessions() }
+                }
+
+                // Trigger Background Memory Consolidation
+                if (parsed.visibleText.isNotBlank()) {
+                    memoryConsolidator?.enqueueTurn(currentUserQuery, parsed.visibleText)
                 }
 
                 _streamingState.value = StreamingState()
@@ -401,7 +413,7 @@ class ChatViewModel : ViewModel() {
         
         _uiState.update { it.copy(isGenerating = true) }
         val promptWithContext = buildPromptWithContext(currentUserQuery, llmText)
-        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(promptWithContext, genId))
+        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(currentUserQuery, promptWithContext, genId))
     }
 
     // ── Intent processor ──────────────────────────────────────────────────────
@@ -519,20 +531,20 @@ class ChatViewModel : ViewModel() {
         _uiState.update { it.copy(isGenerating = true, errorMessage = null) }
 
         val genId = java.util.UUID.randomUUID().toString()
-        val prompt = buildPromptFromHistory(text)
         
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Default) {
+            val prompt = buildPromptFromHistory(text)
             val pacingDelay = socioCognitiveRegulator.calculatePacingDelayMs()
             if (pacingDelay > 0) {
                 kotlinx.coroutines.delay(pacingDelay)
             }
-            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(prompt, genId))
+            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(text, prompt, genId))
         }
     }
 
     // ── Prompt builders ───────────────────────────────────────────────────────
 
-    private fun buildPromptFromHistory(pendingUserText: String): String {
+    private suspend fun buildPromptFromHistory(pendingUserText: String): String {
         val systemPrompt = buildSystemPrompt()
         val regulatoryPrompt = socioCognitiveRegulator.generateRegulatoryPrompt()
         val antiDependencyPrompt = identityAnchorManager?.checkAntiDependencyProtocol(pendingUserText) ?: ""
@@ -576,7 +588,7 @@ class ChatViewModel : ViewModel() {
         // Inject FTS memories if available
         if (activeDegradationLevel < com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.REDUCED_RETRIEVAL) {
             val memories = runCatching {
-                kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                withContext(Dispatchers.IO) {
                     hybridRetriever?.retrieveRelevance(pendingUserText) ?: emptyList()
                 }
             }.getOrElse { emptyList() }

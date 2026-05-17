@@ -133,9 +133,11 @@ class LlmInferenceManager(private val context: Context) {
     }
     
     fun generateResponse(prompt: String): String = runBlocking {
-        val conv = conversation ?: throw IllegalStateException("Model/Conversation not initialized")
-        val response = conv.sendMessage(prompt)
-        return@runBlocking response.toString()
+        inferenceMutex.withLock {
+            val conv = conversation ?: throw IllegalStateException("Model/Conversation not initialized")
+            val response = conv.sendMessage(prompt)
+            return@runBlocking response.toString()
+        }
     }
 
     fun close() {

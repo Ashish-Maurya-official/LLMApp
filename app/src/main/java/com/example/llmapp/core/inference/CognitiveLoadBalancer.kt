@@ -20,15 +20,15 @@ object CognitiveLoadBalancer {
      * By using heuristics instead of an LLM classification call, we save hundreds of milliseconds
      * and preserve battery life.
      */
-    fun determineRoutingPath(query: String, thermalStatus: Int): RoutingPath {
+    fun determineRoutingPath(rawQuery: String, thermalStatus: Int): RoutingPath {
         if (thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) {
             return RoutingPath.REACTIVE // Forced degradation
         }
 
-        val complexKeywords = listOf("why", "how", "explain", "code", "build", "create", "plan", "debug")
-        val isComplex = complexKeywords.any { query.contains(it, ignoreCase = true) }
+        val complexKeywords = listOf("build an app", "plan a trip", "write a script", "debug this", "create a plan")
+        val isComplex = complexKeywords.any { rawQuery.contains(it, ignoreCase = true) }
 
-        if (query.length > 100 || isComplex) {
+        if (rawQuery.length > 250 || isComplex) {
             return RoutingPath.STRATEGIC
         }
 

@@ -159,9 +159,19 @@ fun ChatScreen(
             }
     }
 
+    LaunchedEffect(uiState.finalDictatedText) {
+        if (uiState.finalDictatedText != null) {
+            val space = if (inputText.isNotEmpty() && !inputText.endsWith(" ")) " " else ""
+            inputText += space + uiState.finalDictatedText
+            onIntent(ChatIntent.ClearDictatedText)
+        }
+    }
+
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     var isListening by remember { mutableStateOf(false) }
+    // Track what triggered the permission request: "dictation" or "voice_mode"
+    var pendingPermissionAction by remember { mutableStateOf("voice_mode") }
 
     val voiceManager = remember {
         VoiceManager(
@@ -200,11 +210,19 @@ fun ChatScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
         if (isGranted) {
-            voiceManager.isVoiceModeActive = true
-            onIntent(ChatIntent.ActivateVoiceMode)
-            voiceManager.startListening()
+            when (pendingPermissionAction) {
+                "dictation" -> {
+                    onIntent(ChatIntent.StartDictation)
+                }
+                else -> {
+                    // "voice_mode"
+                    voiceManager.isVoiceModeActive = true
+                    onIntent(ChatIntent.ActivateVoiceMode)
+                    voiceManager.startListening()
+                }
+            }
         } else {
-            Toast.makeText(context, "Microphone permission required for voice mode", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Microphone permission is required", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -240,6 +258,7 @@ fun ChatScreen(
             onIntent(ChatIntent.ActivateVoiceMode)
             voiceManager.startListening()
         } else {
+            pendingPermissionAction = "voice_mode"
             requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
@@ -478,8 +497,15 @@ fun ChatScreen(
                     }
 
                     BasicTextField(
-                        value = inputText,
-                        onValueChange = { inputText = it },
+                        value = if (uiState.isDictating && uiState.partialTranscript.isNotBlank()) {
+                            val space = if (inputText.isNotEmpty() && !inputText.endsWith(" ")) " " else ""
+                            inputText + space + uiState.partialTranscript
+                        } else {
+                            inputText
+                        },
+                        onValueChange = { 
+                            if (!uiState.isDictating) inputText = it 
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 6.dp, vertical = 6.dp)
@@ -522,11 +548,11 @@ fun ChatScreen(
                             MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    if (isListening) {
+                    if (uiState.isDictating) {
                         Surface(
                             onClick = { 
                                 focusManager.clearFocus()
-                                voiceManager.stopListening() 
+                                onIntent(ChatIntent.StopDictation) 
                             },
                             modifier = Modifier.size(32.dp),
                             shape = CircleShape,
@@ -534,8 +560,8 @@ fun ChatScreen(
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = Icons.Default.Mic,
-                                    contentDescription = "Stop Listening",
+                                    imageVector = Icons.Default.Stop,
+                                    contentDescription = "Stop Dictation",
                                     tint = MaterialTheme.colorScheme.onError,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -587,8 +613,9 @@ fun ChatScreen(
                             onClick = {
                                 focusManager.clearFocus()
                                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                    voiceManager.startListening()
+                                    onIntent(ChatIntent.StartDictation)
                                 } else {
+                                    pendingPermissionAction = "dictation"
                                     requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 }
                             },

@@ -28,7 +28,7 @@ class RawAudioRecorder(
     )
 
     // VAD Parameters
-    private var silenceThreshold = 200 // More sensitive
+    private var silenceThreshold = 1500 // Increased from 200 to prevent ambient noise locking the mic
     private var silenceFramesThreshold = 30 // ~1.0 seconds of silence
     private var silenceCounter = 0
     private var isSpeechActive = false

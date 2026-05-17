@@ -12,7 +12,9 @@ data class ChatUiState(
     val isVoiceModeActive: Boolean = false,
     val voiceState: VoiceState = VoiceState.IDLE,
     val partialTranscript: String = "",
-    val activeBackend: String? = null
+    val activeBackend: String? = null,
+    val isDictating: Boolean = false,
+    val finalDictatedText: String? = null
 )
 
 /**
@@ -71,5 +73,8 @@ sealed class ChatIntent {
     data class SetPartialTranscript(val text: String) : ChatIntent()
     data class DeleteSession(val sessionId: String) : ChatIntent()
     object StopGeneration : ChatIntent()
+    object StartDictation : ChatIntent()
+    object StopDictation : ChatIntent()
+    object ClearDictatedText : ChatIntent()
 }
 

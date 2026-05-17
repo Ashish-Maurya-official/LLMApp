@@ -325,17 +325,26 @@ class ChatViewModel : ViewModel() {
 
     private fun handleVoiceEvent(event: com.example.llmapp.core.audio.VoiceEvent) {
         when (event) {
+            is com.example.llmapp.core.audio.VoiceEvent.UserStartedSpeaking -> {
+                _uiState.update { it.copy(voiceState = VoiceState.LISTENING) }
+                // Barge-in: User interrupted the AI.
+                if (_uiState.value.isGenerating) {
+                    processIntent(ChatIntent.StopGeneration)
+                }
+            }
             is com.example.llmapp.core.audio.VoiceEvent.PartialTranscript -> {
                 _uiState.update { it.copy(partialTranscript = event.text) }
             }
             is com.example.llmapp.core.audio.VoiceEvent.FinalTranscript -> {
-                _uiState.update { it.copy(partialTranscript = "") }
-                handleSendMessage(event.text)
-            }
-            is com.example.llmapp.core.audio.VoiceEvent.UserStartedSpeaking -> {
-                // Barge-in: User interrupted the AI.
-                if (_uiState.value.isGenerating) {
-                    processIntent(ChatIntent.StopGeneration)
+                if (_uiState.value.isDictating) {
+                    _uiState.update { it.copy(
+                        partialTranscript = "",
+                        finalDictatedText = event.text
+                        // Keep isDictating = true for continuous multi-sentence dictation
+                    ) }
+                } else {
+                    _uiState.update { it.copy(partialTranscript = "", voiceState = VoiceState.THINKING) }
+                    handleSendMessage(event.text)
                 }
             }
             is com.example.llmapp.core.audio.VoiceEvent.UserStoppedSpeaking -> {
@@ -478,6 +487,17 @@ class ChatViewModel : ViewModel() {
             }
             is ChatIntent.SetVoiceState -> _uiState.update { it.copy(voiceState = intent.state) }
             is ChatIntent.SetPartialTranscript -> _uiState.update { it.copy(partialTranscript = intent.text) }
+            is ChatIntent.StartDictation -> {
+                _uiState.update { it.copy(isDictating = true, partialTranscript = "", finalDictatedText = null) }
+                voiceInteractionManager?.startListening()
+            }
+            is ChatIntent.StopDictation -> {
+                _uiState.update { it.copy(isDictating = false) }
+                voiceInteractionManager?.stopListening()
+            }
+            is ChatIntent.ClearDictatedText -> {
+                _uiState.update { it.copy(finalDictatedText = null) }
+            }
         }
     }
 

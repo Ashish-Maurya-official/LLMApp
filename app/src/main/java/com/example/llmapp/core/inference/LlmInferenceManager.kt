@@ -21,27 +21,37 @@ class LlmInferenceManager(private val context: Context) {
     
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private val inferenceMutex = Mutex()
+    private var currentGenerationJob: Job? = null
 
     suspend fun loadModel(modelPath: String, hardwareBackend: String = "Auto", maxTokens: Int = 1024, temperature: Float = 0.8f, topK: Int = 40): String {
         return withContext(Dispatchers.IO) {
-            engine?.close()
-            
-            val file = File(modelPath)
-            if (!file.exists()) {
-                throw IllegalArgumentException("Model file not found at $modelPath")
-            }
+            inferenceMutex.withLock {
+                conversation?.close()
+                conversation = null
+                engine?.close()
+                engine = null
+                
+                // Explicitly ask JVM to clean up native refs to free RAM before allocating 2GB again
+                System.gc()
+                Thread.sleep(200) // Small pause for GC to finalize
+                
+                val file = File(modelPath)
+                if (!file.exists()) {
+                    throw IllegalArgumentException("Model file not found at $modelPath")
+                }
 
-            if (hardwareBackend == "CPU") {
-                loadWithBackend(modelPath, Backend.CPU(), "CPU")
-            } else if (hardwareBackend == "GPU") {
-                loadWithBackend(modelPath, Backend.GPU(), "GPU")
-            } else {
-                // Auto: Try GPU, fallback to CPU
-                try {
-                    loadWithBackend(modelPath, Backend.GPU(), "GPU")
-                } catch (gpuException: Exception) {
-                    Log.w("LlmInferenceManager", "Auto: GPU failed (${gpuException.message}), falling back to CPU")
+                if (hardwareBackend == "CPU") {
                     loadWithBackend(modelPath, Backend.CPU(), "CPU")
+                } else if (hardwareBackend == "GPU") {
+                    loadWithBackend(modelPath, Backend.GPU(), "GPU")
+                } else {
+                    // Auto: Try GPU, fallback to CPU
+                    try {
+                        loadWithBackend(modelPath, Backend.GPU(), "GPU")
+                    } catch (gpuException: Throwable) {
+                        Log.w("LlmInferenceManager", "Auto: GPU failed (${gpuException.message}), falling back to CPU")
+                        loadWithBackend(modelPath, Backend.CPU(), "CPU")
+                    }
                 }
             }
         }
@@ -83,8 +93,15 @@ class LlmInferenceManager(private val context: Context) {
         conversation = eng.createConversation()
     }
 
+    fun stopGeneration() {
+        currentGenerationJob?.cancel()
+        currentGenerationJob = null
+        Log.d("LlmInferenceManager", "Generation stopped by user.")
+    }
+
     fun generateResponseAsync(prompt: String, generationId: String) {
-        scope.launch {
+        currentGenerationJob?.cancel()
+        currentGenerationJob = scope.launch {
             inferenceMutex.withLock {
                 resetConversation()
                 val freshConv = conversation ?: run {

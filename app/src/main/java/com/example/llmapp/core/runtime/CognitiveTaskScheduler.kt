@@ -17,7 +17,20 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.UUID
 import androidx.room.withTransaction
+import java.util.concurrent.atomic.AtomicInteger
 
+/**
+ * Data class for real-time introspection of the Cognitive Runtime.
+ */
+data class IntrospectionData(
+    val activeAgent: String = "IDLE",
+    val queueDepth: Int = 0,
+    val currentPhase: String = "WAITING"
+)
+
+/**
+ * The Brain of the operation. Routes events between Planner, Verifier, and Synthesizer.
+ */
 class CognitiveTaskScheduler(private val scope: CoroutineScope) {
 
     var chatDatabase: com.example.llmapp.core.database.ChatDatabase? = null
@@ -49,6 +62,9 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
 
     private val _state = MutableStateFlow(CognitiveState())
     val state: StateFlow<CognitiveState> = _state.asStateFlow()
+    
+    private val _introspectionState = MutableStateFlow(IntrospectionData())
+    val introspectionState: StateFlow<IntrospectionData> = _introspectionState.asStateFlow()
 
     private var activeJob: Job? = null
     private val tokenBuffer = StringBuilder()
@@ -165,6 +181,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 if (_state.value.activeGenerationId == event.generationId) {
                     _state.value = _state.value.copy(activeGenerationId = null, phase = ExecutionPhase.IDLE)
                     activeJob?.cancel()
+                    llmInferenceManager?.stopGeneration()
                 }
             }
             is CognitiveEvent.RuntimeEvent.TokenEmitted -> {
@@ -180,8 +197,9 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 try {
                     com.example.llmapp.core.governance.ConstitutionalValidator.validateStream(raw)
                 } catch (e: IllegalStateException) {
-                    Log.e("CognitiveTaskScheduler", "CONSTITUTIONAL VIOLATION: \${e.message}")
+                    Log.e("CognitiveTaskScheduler", "CONSTITUTIONAL VIOLATION: ${e.message}")
                     activeJob?.cancel()
+                    llmInferenceManager?.stopGeneration()
                     _state.value = _state.value.copy(phase = ExecutionPhase.IDLE)
                     emit(CognitiveEvent.RuntimeEvent.Error(
                         CognitiveError.ConstitutionalViolationError(e.message ?: "Unknown Violation"),
@@ -205,6 +223,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                     
                     // Stop LLM immediately
                     activeJob?.cancel()
+                    llmInferenceManager?.stopGeneration()
                     _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
                     emit(CognitiveEvent.ToolEvent.SearchRequested(extractedQuery, event.generationId))
                 }

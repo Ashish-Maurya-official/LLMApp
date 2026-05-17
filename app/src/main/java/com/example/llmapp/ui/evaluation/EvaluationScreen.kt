@@ -35,9 +35,9 @@ fun EvaluationScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Total Tests: \${report.totalTests}", style = MaterialTheme.typography.titleMedium)
-                    Text("Passed: \${report.testsPassed}", color = MaterialTheme.colorScheme.primary)
-                    Text("Hallucinations: \${report.hallucinationCount}", color = MaterialTheme.colorScheme.error)
+                    Text("Total Tests: ${report.totalTests}", style = MaterialTheme.typography.titleMedium)
+                    Text("Passed: ${report.testsPassed}", color = MaterialTheme.colorScheme.primary)
+                    Text("Hallucinations: ${report.hallucinationCount}", color = MaterialTheme.colorScheme.error)
                 }
             }
 

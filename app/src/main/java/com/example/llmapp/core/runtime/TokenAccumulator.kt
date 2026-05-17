@@ -65,11 +65,12 @@ class TokenAccumulator(
         var genIdToEmit = ""
 
         mutex.withLock {
-            if (buffer.isNotEmpty()) {
+            if (buffer.isNotEmpty() || isDoneFlag) {
                 chunkToEmit = buffer.toString()
                 doneToEmit = isDoneFlag
                 genIdToEmit = currentGenId ?: ""
                 buffer.clear()
+                isDoneFlag = false // Reset so we don't spam 'done' in ticker
             }
         }
 

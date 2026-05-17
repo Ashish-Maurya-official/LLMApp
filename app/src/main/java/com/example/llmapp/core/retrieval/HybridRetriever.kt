@@ -23,7 +23,17 @@ class HybridRetriever(
     suspend fun retrieveRelevance(query: String, limit: Int = 5): List<MemoryEntity> = withContext(Dispatchers.IO) {
         // 1. Keyword Search (FTS)
         val keywordResults = try {
-            dao.searchMemoriesFts(query)
+            // Convert full sentence query into FTS OR query: "launch OR code OR Orion"
+            val cleanQuery = query.replace(Regex("[^a-zA-Z0-9 ]"), "")
+            val ftsQuery = cleanQuery.split(Regex("\\s+"))
+                .filter { it.length > 2 } // Keep 3-letter words like 'pet', 'cat'
+                .joinToString(" OR ")
+            
+            if (ftsQuery.isNotBlank()) {
+                dao.searchMemoriesFts(ftsQuery)
+            } else {
+                emptyList()
+            }
         } catch (e: Exception) {
             emptyList()
         }

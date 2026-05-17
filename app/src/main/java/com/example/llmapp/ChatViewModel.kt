@@ -352,6 +352,17 @@ class ChatViewModel : ViewModel() {
                     _uiState.update { it.copy(voiceState = VoiceState.IDLE) }
                 }
             }
+            is com.example.llmapp.core.audio.VoiceEvent.PauseDetected -> {
+                Log.d("ChatViewModel", "Silence/Hesitation detected: \${event.durationMs}ms. Adjusting salience.")
+                // In a full implementation, this could trigger a subtle "Mm-hmm?" or "Take your time" TTS.
+            }
+            is com.example.llmapp.core.audio.VoiceEvent.SpeculativeTrigger -> {
+                Log.d("ChatViewModel", "Speculative Trigger Fired for: \${event.partialText}. Warming up DB caches.")
+                // Trigger a background retrieval to warm up memory caches before the user finishes speaking
+                viewModelScope.launch(Dispatchers.IO) {
+                    hybridRetriever?.retrieveRelevance(event.partialText)
+                }
+            }
             is com.example.llmapp.core.audio.VoiceEvent.Error -> {
                 Log.e("VoiceInteraction", "Voice Error: \${event.message}")
             }
@@ -414,6 +425,27 @@ class ChatViewModel : ViewModel() {
                     partialResponse = _streamingState.value.visibleText
                 )
                 
+                // SAVE PARTIAL MESSAGE BEFORE WIPING
+                val currentStreaming = _streamingState.value
+                val parsed = parseStreamContent(currentStreaming.rawContent)
+                if (parsed.visibleText.isNotBlank() || parsed.thoughts.isNotEmpty()) {
+                    val finalMsg = ChatMessage(
+                        text = parsed.visibleText,
+                        isUser = false,
+                        thoughts = parsed.thoughts,
+                        actions = currentStreaming.actions,
+                        rawContent = currentStreaming.rawContent
+                    )
+                    allMessages.add(finalMsg)
+                    pushMessages()
+
+                    val snapshot = allMessages.toList()
+                    viewModelScope.launch(Dispatchers.IO) {
+                        historyManager?.saveSession(currentSessionId, snapshot)
+                        withContext(Dispatchers.Main) { refreshSessions() }
+                    }
+                }
+                
                 _streamingState.value = StreamingState()
                 _uiState.update { it.copy(isGenerating = false) }
                 cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.StopGeneration(currentGenId))
@@ -429,7 +461,7 @@ class ChatViewModel : ViewModel() {
                 _uiState.update { it.copy(isLoadingModel = true, errorMessage = null) }
                 viewModelScope.launch {
                     try { llmInferenceManager?.loadModel(intent.path); _uiState.update { it.copy(isLoadingModel = false, status = "Model Loaded") } }
-                    catch (e: Exception) { _uiState.update { it.copy(isLoadingModel = false, errorMessage = e.message) } }
+                    catch (e: Throwable) { _uiState.update { it.copy(isLoadingModel = false, errorMessage = e.message) } }
                 }
             }
 

@@ -26,6 +26,8 @@ sealed interface VoiceEvent {
     object AIStartedSpeaking : VoiceEvent
     object AIFinishedSpeaking : VoiceEvent
     data class Error(val message: String) : VoiceEvent
+    data class PauseDetected(val durationMs: Long) : VoiceEvent
+    data class SpeculativeTrigger(val partialText: String) : VoiceEvent
 }
 
 class VoiceInteractionManager(
@@ -46,6 +48,11 @@ class VoiceInteractionManager(
     private val ttsBuffer = java.lang.StringBuilder()
     private val SENTENCE_DELIMITERS = Regex("(?<=[.!?])\\s+|(?<=[.!?])\$")
     private var ttsJob: Job? = null
+    
+    // Advanced Voice Heuristics
+    private var lastPartialResultTime = 0L
+    private var speculativeFiredForCurrentTurn = false
+    private var silenceMonitorJob: Job? = null
 
     init {
         scope.launch(Dispatchers.Main) {
@@ -152,6 +159,10 @@ class VoiceInteractionManager(
     override fun onBeginningOfSpeech() {
         scope.launch { _events.emit(VoiceEvent.UserStartedSpeaking) }
         
+        lastPartialResultTime = System.currentTimeMillis()
+        speculativeFiredForCurrentTurn = false
+        startSilenceMonitor()
+        
         // --- BARGE-IN INTERRUPTION ---
         // If the user starts talking while the AI is speaking, cut the AI off immediately.
         if (isAiSpeaking) {
@@ -160,19 +171,42 @@ class VoiceInteractionManager(
         }
     }
     
+    private fun startSilenceMonitor() {
+        silenceMonitorJob?.cancel()
+        silenceMonitorJob = scope.launch(Dispatchers.Default) {
+            while (isListening) {
+                delay(500)
+                val now = System.currentTimeMillis()
+                if (lastPartialResultTime > 0 && now - lastPartialResultTime > 1500) { // 1.5s pause
+                    _events.emit(VoiceEvent.PauseDetected(now - lastPartialResultTime))
+                }
+            }
+        }
+    }
+    
     override fun onRmsChanged(rmsdB: Float) {}
     override fun onBufferReceived(buffer: ByteArray?) {}
     override fun onEndOfSpeech() {
+        silenceMonitorJob?.cancel()
         scope.launch { _events.emit(VoiceEvent.UserStoppedSpeaking) }
     }
     
     override fun onError(error: Int) {
-        // Auto-restart listening if we are supposed to be in continuous mode
-        if (isListening && error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+        silenceMonitorJob?.cancel()
+        // Conversational Recovery Strategy: Auto-restart listening for transient errors
+        val isTransient = error == SpeechRecognizer.ERROR_NO_MATCH || 
+                          error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || 
+                          error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT
+        
+        if (isListening && isTransient) {
+            Log.d("VoiceInteractionManager", "ASR Transient Error (\$error). Auto-recovering...")
             scope.launch(Dispatchers.Main) {
                 delay(200)
                 if (isListening) startListening()
             }
+        } else if (error != SpeechRecognizer.ERROR_CLIENT) {
+            Log.e("VoiceInteractionManager", "ASR Fatal Error: \$error")
+            scope.launch { _events.emit(VoiceEvent.Error("ASR Error: \$error")) }
         }
     }
     
@@ -195,7 +229,17 @@ class VoiceInteractionManager(
     override fun onPartialResults(partialResults: Bundle?) {
         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         if (!matches.isNullOrEmpty()) {
-            scope.launch { _events.emit(VoiceEvent.PartialTranscript(matches[0])) }
+            val partial = matches[0]
+            lastPartialResultTime = System.currentTimeMillis()
+            scope.launch { _events.emit(VoiceEvent.PartialTranscript(partial)) }
+            
+            // --- SPECULATIVE COGNITION TRIGGER ---
+            // If the user has spoken more than 5 words, fire a speculative intent
+            val wordCount = partial.split(" ").size
+            if (wordCount > 5 && !speculativeFiredForCurrentTurn) {
+                speculativeFiredForCurrentTurn = true
+                scope.launch { _events.emit(VoiceEvent.SpeculativeTrigger(partial)) }
+            }
         }
     }
     

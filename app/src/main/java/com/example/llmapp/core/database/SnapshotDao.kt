@@ -12,4 +12,7 @@ interface SnapshotDao {
 
     @Query("SELECT * FROM cognitive_snapshots WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT 1")
     fun getLatestSnapshot(sessionId: String): CognitiveSnapshotEntity?
+
+    @Query("SELECT * FROM cognitive_snapshots ORDER BY timestamp DESC LIMIT 1")
+    fun getGlobalLatestSnapshot(): CognitiveSnapshotEntity?
 }

@@ -18,4 +18,19 @@ class CognitiveInertiaLimiter {
         }
         return true
     }
+    
+    /**
+     * Prevents rapid overwriting of core memories based on a single contradiction.
+     * Core or highly reinforced memories require multiple contradictions over time
+     * to overcome their "belief momentum".
+     */
+    fun checkBeliefMomentum(memoryType: String, confidence: Float): Boolean {
+        if (memoryType == "identity" || memoryType == "episodic") {
+            if (confidence > 0.8f) {
+                Log.w("CognitiveInertia", "High-momentum memory targeted for rewrite. Blocking instant update to prevent identity drift.")
+                return false
+            }
+        }
+        return true
+    }
 }

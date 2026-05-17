@@ -300,7 +300,7 @@ class MainActivity : ComponentActivity() {
                 withContext(Dispatchers.Main) {
                     viewModel.processIntent(ChatIntent.ModelLoaded(loadedBackend))
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 withContext(Dispatchers.Main) {
                     viewModel.processIntent(ChatIntent.SetError("Failed to load model: ${e.message}"))
                 }

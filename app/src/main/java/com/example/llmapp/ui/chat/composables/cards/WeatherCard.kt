@@ -1,4 +1,4 @@
-package com.example.llmapp.ui.chat.composables
+package com.example.llmapp.ui.chat.composables.cards
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween

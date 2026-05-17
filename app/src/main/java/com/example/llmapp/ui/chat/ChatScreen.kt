@@ -1,10 +1,14 @@
 package com.example.llmapp.ui.chat
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.ActivityCompat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.animateContentSize
@@ -172,6 +176,8 @@ fun ChatScreen(
     var isListening by remember { mutableStateOf(false) }
     // Track what triggered the permission request: "dictation" or "voice_mode"
     var pendingPermissionAction by remember { mutableStateOf("voice_mode") }
+    // Controls visibility of the "Permission Permanently Denied" rationale dialog
+    var showPermissionRationaleDialog by remember { mutableStateOf(false) }
 
     val voiceManager = remember {
         VoiceManager(
@@ -211,19 +217,64 @@ fun ChatScreen(
     ) { isGranted: Boolean ->
         if (isGranted) {
             when (pendingPermissionAction) {
-                "dictation" -> {
-                    onIntent(ChatIntent.StartDictation)
-                }
+                "dictation" -> onIntent(ChatIntent.StartDictation)
                 else -> {
-                    // "voice_mode"
                     voiceManager.isVoiceModeActive = true
                     onIntent(ChatIntent.ActivateVoiceMode)
                     voiceManager.startListening()
                 }
             }
         } else {
-            Toast.makeText(context, "Microphone permission is required", Toast.LENGTH_SHORT).show()
+            // Check if the user has permanently denied ("Don't ask again")
+            // shouldShowRequestPermissionRationale returns false ONLY in two cases:
+            //   1. The user has never been asked (first launch) - we handle this before calling launch()
+            //   2. The user has permanently denied it - we must show rationale + Settings link
+            val activity = context as? android.app.Activity
+            val shouldShow = activity?.let {
+                ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.RECORD_AUDIO)
+            } ?: false
+
+            if (!shouldShow) {
+                // Permanently denied: the only path forward is App Settings
+                showPermissionRationaleDialog = true
+            }
+            // If shouldShow == true, the system dialog was shown and denied once.
+            // We do nothing; the user can tap the button again to re-trigger.
         }
+    }
+
+    // Rationale dialog shown when microphone is permanently blocked
+    if (showPermissionRationaleDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionRationaleDialog = false },
+            icon = { Icon(Icons.Default.Mic, contentDescription = null) },
+            title = { Text("Microphone Access Blocked") },
+            text = {
+                Text(
+                    "You have permanently denied microphone access. " +
+                    "To use voice features, please open App Settings and grant " +
+                    "the Microphone permission manually."
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showPermissionRationaleDialog = false
+                    // Deep-link directly to this app's permission settings page
+                    val intent = Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", context.packageName, null)
+                    ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                    context.startActivity(intent)
+                }) {
+                    Text("Open Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermissionRationaleDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     DisposableEffect(Unit) {
@@ -251,16 +302,48 @@ fun ChatScreen(
             }
         }
     }
-    fun startVoiceMode() {
-        voiceManager.resetForNewGeneration()
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            voiceManager.isVoiceModeActive = true
-            onIntent(ChatIntent.ActivateVoiceMode)
-            voiceManager.startListening()
-        } else {
-            pendingPermissionAction = "voice_mode"
-            requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    /**
+     * Central permission gate for all microphone features.
+     *
+     * State machine:
+     *   GRANTED                 → run action immediately
+     *   DENIED, rationale=true  → first/second denial, re-show system dialog
+     *   DENIED, rationale=false → permanently blocked, show Settings rationale dialog
+     */
+    fun requestMicPermission(action: String) {
+        pendingPermissionAction = action
+        when {
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED -> {
+                // Already granted – run immediately
+                when (action) {
+                    "dictation" -> onIntent(ChatIntent.StartDictation)
+                    else -> {
+                        voiceManager.resetForNewGeneration()
+                        voiceManager.isVoiceModeActive = true
+                        onIntent(ChatIntent.ActivateVoiceMode)
+                        voiceManager.startListening()
+                    }
+                }
+            }
+            ActivityCompat.shouldShowRequestPermissionRationale(
+                context as android.app.Activity, Manifest.permission.RECORD_AUDIO
+            ) -> {
+                // Denied once – Android will show the dialog with "Don't ask again" option
+                requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+            else -> {
+                // Either never asked (show dialog) or permanently denied.
+                // We call launch() here; if denied permanently, Android silently ignores it
+                // and our launcher callback detects it via shouldShowRationale being false.
+                requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
         }
+    }
+
+    fun startVoiceMode() {
+        requestMicPermission("voice_mode")
     }
 
     Scaffold(
@@ -612,12 +695,7 @@ fun ChatScreen(
                         Surface(
                             onClick = {
                                 focusManager.clearFocus()
-                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                    onIntent(ChatIntent.StartDictation)
-                                } else {
-                                    pendingPermissionAction = "dictation"
-                                    requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                }
+                                requestMicPermission("dictation")
                             },
                             modifier = Modifier.size(32.dp),
                             shape = CircleShape,

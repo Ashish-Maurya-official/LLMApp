@@ -100,9 +100,16 @@ class LlmInferenceManager(private val context: Context) {
     }
 
     fun generateResponseAsync(prompt: String, generationId: String) {
-        currentGenerationJob?.cancel()
+        val oldJob = currentGenerationJob
         currentGenerationJob = scope.launch {
+            try {
+                oldJob?.cancelAndJoin()
+            } catch (e: Exception) {
+                Log.w("LlmInferenceManager", "Error joining previous generation job: ${e.message}")
+            }
             inferenceMutex.withLock {
+                // Ensure native threads are completely halted before closing native conversation refs
+                delay(200)
                 resetConversation()
                 val freshConv = conversation ?: run {
                     _outputFlow.emit(Triple("Error: Model not initialized", true, generationId))

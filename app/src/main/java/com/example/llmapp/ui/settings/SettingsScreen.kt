@@ -9,6 +9,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.llmapp.core.search.settings.SearchPreferences
+import com.example.llmapp.core.search.settings.SecureSearchStorage
 import com.example.llmapp.core.settings.SettingsManager
 import com.example.llmapp.ui.settings.composables.*
 
@@ -18,7 +20,9 @@ fun SettingsScreen(
     settingsManager: SettingsManager,
     currentTheme: String,
     onThemeChanged: (String) -> Unit,
-    openDrawer: () -> Unit
+    openDrawer: () -> Unit,
+    searchPreferences: SearchPreferences,
+    secureSearchStorage: SecureSearchStorage
 ) {
     Scaffold(
         topBar = {
@@ -42,16 +46,22 @@ fun SettingsScreen(
         ) {
             SystemPromptSection(settingsManager)
             Spacer(Modifier.height(20.dp))
-            
+
             HardwareBackendSection(settingsManager)
             Spacer(Modifier.height(20.dp))
-            
+
             InferenceParametersSection(settingsManager)
             Spacer(Modifier.height(20.dp))
-            
+
+            SearchSettingsSection(
+                searchPreferences = searchPreferences,
+                secureStorage = secureSearchStorage
+            )
+            Spacer(Modifier.height(20.dp))
+
             VoiceAndSpeechSection(settingsManager)
             Spacer(Modifier.height(20.dp))
-            
+
             AppThemeSection(currentTheme, onThemeChanged)
             Spacer(Modifier.height(24.dp))
         }

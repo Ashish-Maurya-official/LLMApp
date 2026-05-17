@@ -223,6 +223,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                     activeJob?.cancel()
                     llmInferenceManager?.stopGeneration()
                     _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
+                    tokenBuffer.clear()
                     emit(CognitiveEvent.ToolEvent.SearchRequested(extractedQuery, event.generationId))
                 }
             }

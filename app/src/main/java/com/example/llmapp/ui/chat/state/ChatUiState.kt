@@ -18,6 +18,16 @@ data class ChatUiState(
     val finalDictatedText: String? = null
 )
 
+data class WeatherDetails(
+    val location: String,
+    val temp: String,
+    val condition: String,
+    val humidity: String? = null,
+    val wind: String? = null,
+    val high: String? = null,
+    val low: String? = null
+)
+
 sealed class StreamingSegment {
     data class Prose(val stableText: String) : StreamingSegment()
     data class Table(
@@ -27,6 +37,7 @@ sealed class StreamingSegment {
         val committedMarkdown: String
             get() = if (committedRows.isEmpty()) "" else committedRows.joinToString("\n") + "\n"
     }
+    data class Weather(val details: WeatherDetails) : StreamingSegment()
 }
 
 data class StreamingState(

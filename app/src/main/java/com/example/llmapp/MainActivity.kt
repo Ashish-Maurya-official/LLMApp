@@ -48,6 +48,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var modelDownloader: ModelDownloader
     private lateinit var settingsManager: SettingsManager
     private lateinit var historyManager: ChatHistoryManager
+    private lateinit var searchPreferences: com.example.llmapp.core.search.settings.SearchPreferences
+    private lateinit var secureSearchStorage: com.example.llmapp.core.search.settings.SecureSearchStorage
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,6 +74,13 @@ class MainActivity : ComponentActivity() {
         viewModel.llmInferenceManager = llmInferenceManager
         viewModel.settingsManager = settingsManager
         viewModel.historyManager = historyManager
+
+        // Initialize Search System
+        searchPreferences = com.example.llmapp.core.search.settings.SearchPreferences(this)
+        secureSearchStorage = com.example.llmapp.core.search.settings.SecureSearchStorage(this)
+        viewModel.searchOrchestrator = com.example.llmapp.core.search.orchestration.SearchOrchestrator(
+            searchPreferences, secureSearchStorage
+        )
 
         val chaosTestRunner = com.example.llmapp.core.runtime.ChaosTestRunner(viewModel.cognitiveTaskScheduler)
         val filter = IntentFilter("com.example.llmapp.CHAOS_TEST")
@@ -272,7 +281,9 @@ class MainActivity : ComponentActivity() {
                                     settingsManager = settingsManager,
                                     currentTheme = currentTheme,
                                     onThemeChanged = { newTheme -> viewModel.updateTheme(newTheme) },
-                                    openDrawer = { scope.launch { drawerState.open() } }
+                                    openDrawer = { scope.launch { drawerState.open() } },
+                                    searchPreferences = searchPreferences,
+                                    secureSearchStorage = secureSearchStorage
                                 )
                             }
                             composable("profile") {

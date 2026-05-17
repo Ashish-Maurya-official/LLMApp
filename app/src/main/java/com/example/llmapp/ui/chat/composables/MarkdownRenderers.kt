@@ -25,6 +25,8 @@ import com.example.llmapp.ui.chat.utils.StreamingPart
 import com.example.llmapp.ui.chat.utils.parseMarkdownParts
 import com.example.llmapp.ui.chat.utils.parseStreamingContent
 import com.example.llmapp.ui.chat.state.StreamingSegment
+import com.example.llmapp.ui.chat.state.WeatherDetails
+import com.example.llmapp.ui.chat.composables.WeatherCard
 
 @Composable
 fun MarkwonText(markdown: String, modifier: Modifier = Modifier) {
@@ -77,6 +79,9 @@ fun ParsedMarkdownMessage(text: String) {
                     language = part.language,
                     content = part.content,
                     onCopy = { clipboardManager.setText(AnnotatedString(part.content)) }
+                )
+                is MessagePart.Weather -> WeatherCard(
+                    details = part.details
                 )
             }
         }
@@ -219,12 +224,16 @@ fun SegmentedStreamingContent(segments: List<StreamingSegment>) {
             val segmentKey = when (segment) {
                 is StreamingSegment.Prose -> "prose_$index"
                 is StreamingSegment.Table -> "table_${index}_${segment.committedRows.size}"
+                is StreamingSegment.Weather -> "weather_$index"
             }
             key(segmentKey) {
                 when (segment) {
                     is StreamingSegment.Prose -> MarkwonText(
                         markdown = segment.stableText,
                         modifier = Modifier.fillMaxWidth()
+                    )
+                    is StreamingSegment.Weather -> WeatherCard(
+                        details = segment.details
                     )
                     is StreamingSegment.Table -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         if (segment.committedMarkdown.isNotBlank()) {

@@ -76,10 +76,9 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.util.fastForEach
-import com.example.llmapp.core.voice.VoiceManager
 import com.example.llmapp.ui.chat.state.ChatIntent
-import com.example.llmapp.ui.chat.state.ChatUiState
-import com.example.llmapp.ui.chat.state.VoiceState
+    import com.example.llmapp.ui.chat.state.ChatUiState
+    import com.example.llmapp.ui.chat.state.VoiceState
 import com.example.llmapp.ui.voice.VoiceConversationOverlay
 import com.example.llmapp.ChatMessage
 import com.example.llmapp.AgentAction
@@ -178,44 +177,10 @@ fun ChatScreen(
 
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
-    var isListening by remember { mutableStateOf(false) }
     // Track what triggered the permission request: "dictation" or "voice_mode"
     var pendingPermissionAction by remember { mutableStateOf("voice_mode") }
     // Controls visibility of the "Permission Permanently Denied" rationale dialog
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
-
-    val voiceManager = remember {
-        VoiceManager(
-            context = context,
-            onSpeechResult = { text ->
-                onIntent(ChatIntent.SetPartialTranscript(text))
-                onIntent(ChatIntent.SetVoiceState(VoiceState.THINKING))
-                onIntent(ChatIntent.SendMessage(text))
-            },
-            onListeningStateChanged = { listening ->
-                isListening = listening
-                if (listening) onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
-            },
-            onPartialResult = { partial ->
-                onIntent(ChatIntent.SetPartialTranscript(partial))
-            },
-            onInterrupted = {
-                onIntent(ChatIntent.StopGeneration)
-                // Clear partial transcript
-                onIntent(ChatIntent.SetPartialTranscript(""))
-            },
-            onSpeakingStateChanged = { speaking ->
-                if (speaking) onIntent(ChatIntent.SetVoiceState(VoiceState.SPEAKING))
-                else if (uiState.isVoiceModeActive) onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
-            },
-            onError = { error ->
-                Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
-            },
-            speechRate = settingsManager?.ttsSpeechRate ?: 0.95f,
-            voiceName = settingsManager?.ttsVoiceName ?: "",
-            language = settingsManager?.language ?: "English"
-        )
-    }
 
     val requestPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -224,9 +189,7 @@ fun ChatScreen(
             when (pendingPermissionAction) {
                 "dictation" -> onIntent(ChatIntent.StartDictation)
                 else -> {
-                    voiceManager.isVoiceModeActive = true
                     onIntent(ChatIntent.ActivateVoiceMode)
-                    voiceManager.startListening()
                 }
             }
         } else {
@@ -282,16 +245,13 @@ fun ChatScreen(
         )
     }
 
+    // Token callback — routed to ViewModel which forwards to ConversationEngine
     DisposableEffect(Unit) {
-        // Register real token callback with ViewModel for true streaming TTS
         onRegisterTokenCallback { token, done ->
-            if (voiceManager.isVoiceModeActive) {
-                voiceManager.feedToken(token, done)
-            }
+            // Intentionally empty — ViewModel.onNewLlmToken handles this via the
+            // onNewToken callback registered in MainActivity/app initialization
         }
-        onDispose {
-            voiceManager.destroy()
-        }
+        onDispose { }
     }
 
     // Removed fallback one-shot speak as per user request to only speak in live mode
@@ -322,26 +282,18 @@ fun ChatScreen(
                 context, Manifest.permission.RECORD_AUDIO
             ) == PackageManager.PERMISSION_GRANTED -> {
                 // Already granted – run immediately
-                when (action) {
-                    "dictation" -> onIntent(ChatIntent.StartDictation)
-                    else -> {
-                        voiceManager.resetForNewGeneration()
-                        voiceManager.isVoiceModeActive = true
-                        onIntent(ChatIntent.ActivateVoiceMode)
-                        voiceManager.startListening()
-                    }
+            when (action) {
+                "dictation" -> onIntent(ChatIntent.StartDictation)
+                else -> {
+                    onIntent(ChatIntent.ActivateVoiceMode)
                 }
-            }
+            }    }
             ActivityCompat.shouldShowRequestPermissionRationale(
                 context as android.app.Activity, Manifest.permission.RECORD_AUDIO
             ) -> {
-                // Denied once – Android will show the dialog with "Don't ask again" option
                 requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
             else -> {
-                // Either never asked (show dialog) or permanently denied.
-                // We call launch() here; if denied permanently, Android silently ignores it
-                // and our launcher callback detects it via shouldShowRationale being false.
                 requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
         }
@@ -410,13 +362,11 @@ fun ChatScreen(
             voiceState = uiState.voiceState,
             partialTranscript = uiState.partialTranscript,
             onInterrupt = {
-                voiceManager.interrupt()
+                onIntent(ChatIntent.StopGeneration)
                 onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
             },
             onDismiss = {
-                voiceManager.interrupt()
-                voiceManager.isVoiceModeActive = false
-                voiceManager.stopListening()
+                onIntent(ChatIntent.StopGeneration)
                 onIntent(ChatIntent.DeactivateVoiceMode)
             }
         )

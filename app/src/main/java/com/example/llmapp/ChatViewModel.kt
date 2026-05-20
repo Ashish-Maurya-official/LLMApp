@@ -781,7 +781,12 @@ class ChatViewModel : ViewModel() {
                 _uiState.update { it.copy(isVoiceModeActive = false, voiceState = VoiceState.IDLE, partialTranscript = "") }
                 conversationEngine?.stop()
             }
-            is ChatIntent.SetVoiceState -> _uiState.update { it.copy(voiceState = intent.state) }
+            is ChatIntent.SetVoiceState -> {
+                _uiState.update { it.copy(voiceState = intent.state) }
+                if (intent.state == VoiceState.LISTENING) {
+                    conversationEngine?.interrupt()
+                }
+            }
             is ChatIntent.SetPartialTranscript -> _uiState.update { it.copy(partialTranscript = intent.text) }
             is ChatIntent.StartDictation -> {
                 _uiState.update { it.copy(isDictating = true, partialTranscript = "", finalDictatedText = null) }

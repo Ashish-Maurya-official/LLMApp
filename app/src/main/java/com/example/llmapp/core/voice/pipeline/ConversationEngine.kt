@@ -121,8 +121,9 @@ class ConversationEngine(
         isTtsSpeaking = false
         generationComplete = false
 
-        // Android ASR mode: start a new ASR session
+        // Android ASR mode: cleanly restart the ASR session
         if (isActive) {
+            whisperRunner.stopAndroidAsr()
             beginListeningAndroidAsr()
         }
     }
@@ -198,6 +199,11 @@ class ConversationEngine(
         updateState(AudioPipelineState.Thinking)
         resetTtsPipeline()
         mainHandler.post { onTranscript(text) }
+        
+        // Keep microphone open for automatic barge-in
+        if (isActive) {
+            beginListeningAndroidAsr()
+        }
     }
 
     // ── TTS Pipeline ───────────────────────────────────────────────────────
@@ -277,12 +283,12 @@ class ConversationEngine(
                 isTtsSpeaking = false
             }
 
-            // All sentences done — return to listening if generation is complete
+            // All sentences done — return to listening state UI
             if (isActive && generationComplete) {
                 generationComplete = false
-                delay(250L)  // brief natural pause before mic reopens
+                delay(250L)  // brief natural pause
 
-                beginListeningAndroidAsr()
+                // Mic is already open (started in handleTranscript for barge-in)
                 updateState(AudioPipelineState.Listening)
             }
         }

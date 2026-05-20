@@ -9,7 +9,7 @@ import kotlinx.coroutines.*
 import java.util.Locale
 import java.util.UUID
 import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
  * Android TextToSpeech wrapped behind the TtsEngine interface.

@@ -4,23 +4,20 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlin.math.sqrt
 
 /**
  * Production-grade VAD audio recorder with:
- *  - Continuous mic recording (no tearing down AudioRecord on speech end)
- *  - VAD enable/disable toggle for state management
- *  - Self-calibrating noise floor tracker (EMA) for dynamic VAD thresholding
  *  - 300ms pre-roll ring buffer (never clips the beginning of speech)
- *  - RMS-based energy detection over 50ms windows
- *  - Configurable speech-hold timer for natural pauses
- *  - Acoustic Echo Cancellation (AEC) support
+ *  - RMS-based energy detection over 50ms windows (immune to noise spikes)
+ *  - Configurable speech-hold timer (default 600ms) for natural pause handling
+ *  - Clean event callbacks — onSpeechStart, onAudioReady, onLevel
  */
 class VadAudioRecorder(
     private val sampleRate: Int = 16000,
+    private val silenceThresholdRms: Float = 250f,    // RMS amplitude threshold
     private val speechHoldMs: Long = 600L,             // Hold speech open for 600ms after last sound
     private val preRollMs: Int = 300,                  // Pre-roll buffer to capture utterance onset
     private val onSpeechStart: () -> Unit = {},
@@ -43,46 +40,21 @@ class VadAudioRecorder(
     private val speechBuffer = mutableListOf<Short>()
 
     private var audioRecord: AudioRecord? = null
-    private var aec: AcousticEchoCanceler? = null
     private var recordingJob: Job? = null
     private var isRecording = false
 
-    @Volatile
-    private var isVadEnabled = true
-
-    @Volatile
     private var isSpeechActive = false
     private var lastSoundTimeMs = 0L
 
     // RMS window: 50ms at 16kHz = 800 samples
     private val rmsWindowSize = sampleRate * 50 / 1000
 
-    // Self-calibrating ambient noise floor
-    @Volatile
-    private var noiseFloor = 150f
-
-    /**
-     * Toggles whether the recorder processes voice activity detection.
-     * When disabled, audio samples are read from the mic (keeping it active) but discarded.
-     */
-    fun setVadEnabled(enabled: Boolean) {
-        Log.d(TAG, "setVadEnabled: $enabled")
-        isVadEnabled = enabled
-        if (!enabled) {
-            // Reset speech active state and clear buffers
-            isSpeechActive = false
-            preRollBuffer.clear()
-            speechBuffer.clear()
-        }
-    }
-
     @SuppressLint("MissingPermission")
     fun start(scope: CoroutineScope) {
         if (isRecording) return
 
-        // Use MIC instead of VOICE_RECOGNITION for wider compatibility
         audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
             sampleRate,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
@@ -92,18 +64,6 @@ class VadAudioRecorder(
         if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
             Log.e(TAG, "AudioRecord failed to initialize")
             return
-        }
-
-        // Setup Acoustic Echo Canceler
-        val audioSessionId = audioRecord?.audioSessionId
-        if (audioSessionId != null && AcousticEchoCanceler.isAvailable()) {
-            try {
-                aec = AcousticEchoCanceler.create(audioSessionId)
-                aec?.enabled = true
-                Log.d(TAG, "AcousticEchoCanceler successfully enabled")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to create AcousticEchoCanceler: ${e.message}")
-            }
         }
 
         preRollBuffer.clear()
@@ -116,14 +76,7 @@ class VadAudioRecorder(
             val readBuffer = ShortArray(bufferSize)
             while (isActive && isRecording) {
                 val read = audioRecord?.read(readBuffer, 0, readBuffer.size) ?: break
-                if (read < 0) {
-                    Log.e(TAG, "AudioRecord read error code: $read")
-                    break // Stop recording thread on hardware error (no busy loop!)
-                }
-                if (read == 0) {
-                    delay(10)
-                    continue
-                }
+                if (read <= 0) continue
 
                 val chunk = readBuffer.copyOfRange(0, read)
                 processChunk(chunk)
@@ -135,21 +88,8 @@ class VadAudioRecorder(
         val rms = computeRms(chunk)
         onLevel(rms)
 
-        // Slow Exponential Moving Average to track ambient noise floor when not speaking
-        if (!isSpeechActive) {
-            noiseFloor = noiseFloor * 0.98f + rms * 0.02f
-        }
-
-        // Dynamic threshold: ambient noise floor + 350f margin
-        val dynamicThreshold = (noiseFloor + 350f).coerceIn(250f, 1500f)
-
-        if (!isVadEnabled) {
-            // VAD is disabled (AI is thinking/speaking), discard audio
-            return
-        }
-
         val now = System.currentTimeMillis()
-        val hasSpeech = rms > dynamicThreshold
+        val hasSpeech = rms > silenceThresholdRms
 
         if (hasSpeech) {
             lastSoundTimeMs = now
@@ -159,7 +99,7 @@ class VadAudioRecorder(
                 speechBuffer.addAll(preRollBuffer)
                 preRollBuffer.clear()
                 onSpeechStart()
-                Log.d(TAG, "VAD: Speech started (RMS=$rms, NoiseFloor=$noiseFloor, Threshold=$dynamicThreshold)")
+                Log.d(TAG, "VAD: Speech started (RMS=$rms)")
             }
             speechBuffer.addAll(chunk.toList())
         } else {
@@ -200,13 +140,6 @@ class VadAudioRecorder(
         recordingJob?.cancel()
         recordingJob = null
         try {
-            aec?.enabled = false
-            aec?.release()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing AEC: ${e.message}")
-        }
-        aec = null
-        try {
             audioRecord?.stop()
             audioRecord?.release()
         } catch (e: Exception) {
@@ -217,4 +150,3 @@ class VadAudioRecorder(
         speechBuffer.clear()
     }
 }
-

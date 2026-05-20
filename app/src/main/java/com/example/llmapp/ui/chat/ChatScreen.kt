@@ -77,8 +77,8 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.util.fastForEach
 import com.example.llmapp.ui.chat.state.ChatIntent
-    import com.example.llmapp.ui.chat.state.ChatUiState
-    import com.example.llmapp.ui.chat.state.VoiceState
+import com.example.llmapp.ui.chat.state.ChatUiState
+import com.example.llmapp.ui.chat.state.VoiceState
 import com.example.llmapp.ui.voice.VoiceConversationOverlay
 import com.example.llmapp.ChatMessage
 import com.example.llmapp.AgentAction
@@ -114,10 +114,8 @@ fun ChatScreen(
     }
 
     var autoScrollEnabled by remember { mutableStateOf(true) }
-
     var isUserScrolling by remember { mutableStateOf(false) }
 
-    // 1. Instantly pause auto-scroll the moment the user touches and drags the list
     val isDragged by listState.interactionSource.collectIsDraggedAsState()
     LaunchedEffect(isDragged) {
         if (isDragged) {
@@ -126,9 +124,6 @@ fun ChatScreen(
         }
     }
 
-    // 2. Observer: Checks the scroll position whenever a MANUAL scroll finishes.
-    // By guarding with `isUserScrolling`, we completely ignore programmatic scrollToItem
-    // calls, preventing them from accidentally breaking the state.
     LaunchedEffect(listState.isScrollInProgress) {
         if (!listState.isScrollInProgress && isUserScrolling) {
             autoScrollEnabled = listState.isNearBottom(100)
@@ -136,9 +131,6 @@ fun ChatScreen(
         }
     }
 
-
-
-    // Structural scroll: fires when a message is added or generation starts/ends.
     LaunchedEffect(sessionMessages.size, uiState.isGenerating) {
         if (autoScrollEnabled) {
             val anchorIndex = listState.layoutInfo.totalItemsCount - 1
@@ -146,9 +138,6 @@ fun ChatScreen(
         }
     }
 
-    // Streaming scroll: collectLatest ensures we only handle the latest token update.
-    // We wait for TWO frames to ensure markdown tables have stabilized their layout
-    // (which often involves multiple measure/layout passes) before scrolling.
     val streamingContentLength by remember { derivedStateOf { streamingState.value.rawContent.length } }
     val isCurrentlyGenerating by rememberUpdatedState(uiState.isGenerating)
 
@@ -156,10 +145,8 @@ fun ChatScreen(
         snapshotFlow { streamingContentLength }
             .collectLatest {
                 if (!isCurrentlyGenerating) return@collectLatest
-                
                 withFrameNanos { }
                 withFrameNanos { }
-                
                 if (autoScrollEnabled) {
                     val anchorIndex = listState.layoutInfo.totalItemsCount - 1
                     if (anchorIndex >= 0) listState.scrollToItem(anchorIndex)
@@ -177,6 +164,7 @@ fun ChatScreen(
 
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+
     // Track what triggered the permission request: "dictation" or "voice_mode"
     var pendingPermissionAction by remember { mutableStateOf("voice_mode") }
     // Controls visibility of the "Permission Permanently Denied" rationale dialog
@@ -188,26 +176,14 @@ fun ChatScreen(
         if (isGranted) {
             when (pendingPermissionAction) {
                 "dictation" -> onIntent(ChatIntent.StartDictation)
-                else -> {
-                    onIntent(ChatIntent.ActivateVoiceMode)
-                }
+                else        -> onIntent(ChatIntent.ActivateVoiceMode)
             }
         } else {
-            // Check if the user has permanently denied ("Don't ask again")
-            // shouldShowRequestPermissionRationale returns false ONLY in two cases:
-            //   1. The user has never been asked (first launch) - we handle this before calling launch()
-            //   2. The user has permanently denied it - we must show rationale + Settings link
             val activity = context as? android.app.Activity
             val shouldShow = activity?.let {
                 ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.RECORD_AUDIO)
             } ?: false
-
-            if (!shouldShow) {
-                // Permanently denied: the only path forward is App Settings
-                showPermissionRationaleDialog = true
-            }
-            // If shouldShow == true, the system dialog was shown and denied once.
-            // We do nothing; the user can tap the button again to re-trigger.
+            if (!shouldShow) showPermissionRationaleDialog = true
         }
     }
 
@@ -227,7 +203,6 @@ fun ChatScreen(
             confirmButton = {
                 Button(onClick = {
                     showPermissionRationaleDialog = false
-                    // Deep-link directly to this app's permission settings page
                     val intent = Intent(
                         Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                         Uri.fromParts("package", context.packageName, null)
@@ -245,33 +220,29 @@ fun ChatScreen(
         )
     }
 
-    // Token callback — routed to ViewModel which forwards to ConversationEngine
+    // Token callback registration — no-op here, ViewModel.onNewLlmToken() handles TTS routing
     DisposableEffect(Unit) {
-        onRegisterTokenCallback { token, done ->
-            // Intentionally empty — ViewModel.onNewLlmToken handles this via the
-            // onNewToken callback registered in MainActivity/app initialization
-        }
+        onRegisterTokenCallback { _, _ -> /* handled by ViewModel */ }
         onDispose { }
     }
-
-    // Removed fallback one-shot speak as per user request to only speak in live mode
 
     val view = LocalView.current
     LaunchedEffect(uiState.voiceState) {
         if (uiState.isVoiceModeActive) {
             when (uiState.voiceState) {
                 VoiceState.LISTENING -> view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                VoiceState.THINKING -> view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                VoiceState.SPEAKING -> view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                VoiceState.THINKING  -> view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                VoiceState.SPEAKING  -> view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                 else -> {}
             }
         }
     }
+
     /**
      * Central permission gate for all microphone features.
      *
      * State machine:
-     *   GRANTED                 → run action immediately
+     *   GRANTED                 → dispatch intent immediately (ConversationEngine starts)
      *   DENIED, rationale=true  → first/second denial, re-show system dialog
      *   DENIED, rationale=false → permanently blocked, show Settings rationale dialog
      */
@@ -281,13 +252,12 @@ fun ChatScreen(
             ContextCompat.checkSelfPermission(
                 context, Manifest.permission.RECORD_AUDIO
             ) == PackageManager.PERMISSION_GRANTED -> {
-                // Already granted – run immediately
-            when (action) {
-                "dictation" -> onIntent(ChatIntent.StartDictation)
-                else -> {
-                    onIntent(ChatIntent.ActivateVoiceMode)
+                // Already granted — dispatch intent, ConversationEngine.start() handles the rest
+                when (action) {
+                    "dictation" -> onIntent(ChatIntent.StartDictation)
+                    else        -> onIntent(ChatIntent.ActivateVoiceMode)
                 }
-            }    }
+            }
             ActivityCompat.shouldShowRequestPermissionRationale(
                 context as android.app.Activity, Manifest.permission.RECORD_AUDIO
             ) -> {
@@ -299,80 +269,78 @@ fun ChatScreen(
         }
     }
 
-    fun startVoiceMode() {
-        requestMicPermission("voice_mode")
-    }
-
     // Root box so VoiceConversationOverlay can be positioned absolutely
     // over the ENTIRE screen (including top bar / status bar).
     Box(modifier = Modifier.fillMaxSize()) {
 
-    Scaffold(
-        modifier = Modifier.pointerInput(Unit) {
-            detectTapGestures(onTap = { focusManager.clearFocus() })
-        },
-        topBar = {
-            ChatTopBar(
-                uiState = uiState,
-                settingsManager = settingsManager,
-                openDrawer = openDrawer,
-                onIntent = onIntent
+        Scaffold(
+            modifier = Modifier.pointerInput(Unit) {
+                detectTapGestures(onTap = { focusManager.clearFocus() })
+            },
+            topBar = {
+                ChatTopBar(
+                    uiState = uiState,
+                    settingsManager = settingsManager,
+                    openDrawer = openDrawer,
+                    onIntent = onIntent
+                )
+            }
+        ) { innerPadding ->
+
+            Box(modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .imePadding()
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    ChatList(
+                        listState = listState,
+                        sessionMessages = sessionMessages,
+                        uiState = uiState,
+                        streamingState = streamingState,
+                        clipboardManager = clipboardManager,
+                        modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
+                    )
+
+                    ChatInputBar(
+                        inputText = inputText,
+                        onInputTextChange = { inputText = it },
+                        uiState = uiState,
+                        onIntent = onIntent,
+                        requestMicPermission = { action -> requestMicPermission(action) },
+                        onSend = {
+                            onIntent(ChatIntent.SendMessage(inputText))
+                            inputText = ""
+                            autoScrollEnabled = true
+                        },
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
+                }
+
+                // Loading Overlay
+                if (uiState.isLoadingModel) {
+                    LoadingModelOverlay()
+                }
+            }
+        } // end Scaffold
+
+        // ── Absolute full-screen Voice Mode overlay ────────────────────────────
+        // All voice control goes through intents → ChatViewModel → ConversationEngine.
+        // No direct VoiceManager calls here.
+        if (uiState.isVoiceModeActive) {
+            VoiceConversationOverlay(
+                voiceState = uiState.voiceState,
+                partialTranscript = uiState.partialTranscript,
+                onInterrupt = {
+                    // Barge-in: ConversationEngine handles this internally via VAD,
+                    // but the UI button also allows manual interruption.
+                    onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
+                },
+                onDismiss = {
+                    onIntent(ChatIntent.DeactivateVoiceMode)
+                }
             )
         }
-    ) { innerPadding ->
-
-        Box(modifier = Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding).imePadding()) {
-            
-            Column(modifier = Modifier.fillMaxSize()) {
-                ChatList(
-                    listState = listState,
-                    sessionMessages = sessionMessages,
-                    uiState = uiState,
-                    streamingState = streamingState,
-                    clipboardManager = clipboardManager,
-                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
-                )
-
-                ChatInputBar(
-                    inputText = inputText,
-                    onInputTextChange = { inputText = it },
-                    uiState = uiState,
-                    onIntent = onIntent,
-                    requestMicPermission = { action -> requestMicPermission(action) },
-                    onSend = {
-                        onIntent(ChatIntent.SendMessage(inputText))
-                        inputText = ""
-                        autoScrollEnabled = true
-                    },
-                    modifier = Modifier.padding(bottom = 10.dp)
-                )
-            }
-
-            // Loading Overlay
-            if (uiState.isLoadingModel) {
-                LoadingModelOverlay()
-            }
-        }
-    } // end Scaffold
-
-
-    // ── Absolute full-screen Voice Mode overlay ────────────────────────────
-    if (uiState.isVoiceModeActive) {
-        VoiceConversationOverlay(
-            voiceState = uiState.voiceState,
-            partialTranscript = uiState.partialTranscript,
-            onInterrupt = {
-                onIntent(ChatIntent.StopGeneration)
-                onIntent(ChatIntent.SetVoiceState(VoiceState.LISTENING))
-            },
-            onDismiss = {
-                onIntent(ChatIntent.StopGeneration)
-                onIntent(ChatIntent.DeactivateVoiceMode)
-            }
-        )
-    } 
     } // end root Box
 }
-
-
-

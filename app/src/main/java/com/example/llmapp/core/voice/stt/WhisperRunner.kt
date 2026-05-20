@@ -176,12 +176,7 @@ class WhisperRunner(private val context: Context) {
             applyMelFilters(powerSpec, mel, frame)
         }
         // Log scaling with global normalization (Whisper style)
-        var maxVal = 0f
-        for (m in 0 until N_MELS) {
-            for (t in 0 until N_FRAMES) {
-                if (mel[m][t] > maxVal) maxVal = mel[m][t]
-            }
-        }
+        var maxVal = mel.flatMap { it.toList() }.maxOrNull() ?: 1f
         if (maxVal == 0f) maxVal = 1f
         for (m in 0 until N_MELS) for (t in 0 until N_FRAMES) {
             mel[m][t] = (log10(max(1e-10f, mel[m][t])).coerceAtLeast(log10(maxVal) - 8f) + 4f) / 4f

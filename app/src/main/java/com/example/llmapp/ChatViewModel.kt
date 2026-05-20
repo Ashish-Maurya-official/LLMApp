@@ -717,7 +717,6 @@ class ChatViewModel : ViewModel() {
             }
 
             is ChatIntent.StopGeneration -> {
-                conversationEngine?.interrupt()
                 val currentGenId = cognitiveTaskScheduler.state.value.activeGenerationId ?: ""
                 intentThreadManager.suspendIntent(
                     generationId = currentGenId,

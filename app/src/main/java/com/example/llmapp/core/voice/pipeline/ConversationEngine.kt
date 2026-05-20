@@ -73,12 +73,6 @@ class ConversationEngine(
         if (isActive) return
         isActive = true
         Log.i(TAG, "ConversationEngine started. TTS backend: ${if (piperEngine.isAvailable()) "Piper" else "Android TTS"}")
-        if (whisperRunner.isAvailable()) {
-            scope.launch {
-                vadRecorder.start(this)
-                vadRecorder.setVadEnabled(true)
-            }
-        }
         startListening()
     }
 
@@ -129,7 +123,7 @@ class ConversationEngine(
                 }
             }
         } else {
-            vadRecorder.setVadEnabled(true)
+            scope.launch { vadRecorder.start(this) }
         }
     }
 
@@ -148,7 +142,7 @@ class ConversationEngine(
     }
 
     private fun handleAudioReady(audio: ShortArray) {
-        vadRecorder.setVadEnabled(false)
+        vadRecorder.stop()
         updateState(AudioPipelineState.Transcribing())
 
         scope.launch(Dispatchers.IO) {

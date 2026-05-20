@@ -13,3 +13,14 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Python / dev scripts
+__pycache__/
+*.py
+*.pyc
+vocab.json
+test_dft.kt
+adb_*.txt
+
+# Kotlin compiler artifacts
+.kotlin/

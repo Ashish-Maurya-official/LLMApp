@@ -33,10 +33,13 @@ class WhisperRunner(private val context: Context) {
     // Android fallback
     private var speechRecognizer: SpeechRecognizer? = null
     private var pendingFallbackCallback: ((String) -> Unit)? = null
+    private var pendingPartialCallback: ((String) -> Unit)? = null
+    private var pendingSpeechStartCallback: (() -> Unit)? = null
 
     init {
         loadTflite()
         loadVocab()
+        loadMelFilters()
         initFallback()
     }
 
@@ -64,18 +67,40 @@ class WhisperRunner(private val context: Context) {
         }
     }
 
+    private var melFilters: FloatArray? = null
+
+    private fun loadMelFilters() {
+        try {
+            val bytes = context.assets.open("mel_filters.bin").readBytes()
+            val byteBuffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            val filters = FloatArray(80 * 201)
+            byteBuffer.asFloatBuffer().get(filters)
+            melFilters = filters
+            Log.i(TAG, "Whisper mel filters loaded: ${filters.size} floats")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load mel_filters.bin: ${e.message}")
+        }
+    }
+
     private fun initFallback() {
         try {
             if (SpeechRecognizer.isRecognitionAvailable(context)) {
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
                     setRecognitionListener(object : RecognitionListener {
                         override fun onReadyForSpeech(p: Bundle?) {}
-                        override fun onBeginningOfSpeech() {}
+                        override fun onBeginningOfSpeech() {
+                            pendingSpeechStartCallback?.invoke()
+                        }
                         override fun onRmsChanged(v: Float) {}
                         override fun onBufferReceived(b: ByteArray?) {}
                         override fun onEndOfSpeech() {}
                         override fun onEvent(t: Int, p: Bundle?) {}
-                        override fun onPartialResults(r: Bundle?) {}
+                        override fun onPartialResults(r: Bundle?) {
+                            val text = r?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
+                            if (text.isNotBlank()) {
+                                pendingPartialCallback?.invoke(text)
+                            }
+                        }
                         override fun onError(error: Int) {
                             Log.e(TAG, "SpeechRecognizer error: $error")
                             pendingFallbackCallback?.invoke("")
@@ -118,12 +143,18 @@ class WhisperRunner(private val context: Context) {
      * from ConversationEngine when TFLite is unavailable).
      * Must be called on Main thread.
      */
-    fun startAndroidAsr(callback: (String) -> Unit) {
-        if (speechRecognizer == null) { callback(""); return }
-        pendingFallbackCallback = callback
+    fun startAndroidAsr(
+        onFinal: (String) -> Unit,
+        onPartial: ((String) -> Unit)? = null,
+        onSpeechStart: (() -> Unit)? = null
+    ) {
+        if (speechRecognizer == null) { onFinal(""); return }
+        pendingFallbackCallback = onFinal
+        pendingPartialCallback = onPartial
+        pendingSpeechStartCallback = onSpeechStart
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
         speechRecognizer?.startListening(intent)
@@ -163,18 +194,49 @@ class WhisperRunner(private val context: Context) {
     private val N_MELS = 80
     private val N_FRAMES = 3000
 
+    // Precompute sine and cosine tables for 400-point DFT to match Whisper EXACTLY
+    private val cosTable = FloatArray(201 * N_FFT)
+    private val sinTable = FloatArray(201 * N_FFT)
+    
+    init {
+        for (k in 0 until 201) {
+            for (n in 0 until N_FFT) {
+                val angle = -2.0 * Math.PI * k * n / N_FFT
+                cosTable[k * N_FFT + n] = Math.cos(angle).toFloat()
+                sinTable[k * N_FFT + n] = Math.sin(angle).toFloat()
+            }
+        }
+    }
+
     private fun computeLogMelSpectrogram(samples: FloatArray): Array<FloatArray> {
         val mel = Array(N_MELS) { FloatArray(N_FRAMES) }
-        val window = hamming(N_FFT)
-        val fftSize = N_FFT
+        val window = hannWindow(N_FFT)
+
+        // Center padding matching PyTorch stft(center=True)
+        val pad = N_FFT / 2
+        val paddedSamples = FloatArray(samples.size + pad * 2)
+        System.arraycopy(samples, 0, paddedSamples, pad, samples.size)
 
         for (frame in 0 until N_FRAMES) {
             val start = frame * HOP
-            if (start + fftSize > samples.size) break
-            val windowed = FloatArray(fftSize) { samples[start + it] * window[it] }
+            if (start + N_FFT > paddedSamples.size) break
+            val windowed = FloatArray(N_FFT) { paddedSamples[start + it] * window[it] }
             val powerSpec = powerSpectrum(windowed)
-            applyMelFilters(powerSpec, mel, frame)
+            
+            // Apply exact Whisper mel filters
+            for (m in 0 until N_MELS) {
+                var s = 0f
+                val filters = melFilters
+                if (filters != null) {
+                    val offset = m * 201
+                    for (k in 0 until 201) {
+                        s += powerSpec[k] * filters[offset + k]
+                    }
+                }
+                mel[m][frame] = s
+            }
         }
+        
         // Log scaling with global normalization (Whisper style)
         var maxVal = mel.flatMap { it.toList() }.maxOrNull() ?: 1f
         if (maxVal == 0f) maxVal = 1f
@@ -184,71 +246,25 @@ class WhisperRunner(private val context: Context) {
         return mel
     }
 
-    private fun hamming(size: Int) = FloatArray(size) {
-        (0.54 - 0.46 * cos(2 * PI * it / (size - 1))).toFloat()
+    private fun hannWindow(size: Int) = FloatArray(size) {
+        (0.5 - 0.5 * cos(2 * PI * it / size)).toFloat()
     }
 
     private fun powerSpectrum(frame: FloatArray): FloatArray {
-        val n = frame.size
-        val re = frame.copyOf()
-        val im = FloatArray(n)
-        fft(re, im)
-        return FloatArray(n / 2 + 1) { re[it] * re[it] + im[it] * im[it] }
-    }
-
-    private fun fft(re: FloatArray, im: FloatArray) {
-        val n = re.size
-        var j = 0
-        for (i in 1 until n) {
-            var bit = n shr 1
-            while (j and bit != 0) { j = j xor bit; bit = bit shr 1 }
-            j = j xor bit
-            if (i < j) { re[i] = re[j].also { re[j] = re[i] }; im[i] = im[j].also { im[j] = im[i] } }
-        }
-        var len = 2
-        while (len <= n) {
-            val ang = (-2 * PI / len).toFloat()
-            val wRe = cos(ang.toDouble()).toFloat(); val wIm = sin(ang.toDouble()).toFloat()
-            var i = 0
-            while (i < n) {
-                var curRe = 1f; var curIm = 0f
-                for (k in 0 until len / 2) {
-                    val uRe = re[i + k]; val uIm = im[i + k]
-                    val vRe = re[i + k + len / 2] * curRe - im[i + k + len / 2] * curIm
-                    val vIm = re[i + k + len / 2] * curIm + im[i + k + len / 2] * curRe
-                    re[i + k] = uRe + vRe; im[i + k] = uIm + vIm
-                    re[i + k + len / 2] = uRe - vRe; im[i + k + len / 2] = uIm - vIm
-                    val nRe = curRe * wRe - curIm * wIm
-                    curIm = curRe * wIm + curIm * wRe; curRe = nRe
-                }
-                i += len
+        val out = FloatArray(201)
+        for (k in 0 until 201) {
+            var re = 0f
+            var im = 0f
+            val offset = k * N_FFT
+            for (n in 0 until N_FFT) {
+                val v = frame[n]
+                re += v * cosTable[offset + n]
+                im += v * sinTable[offset + n]
             }
-            len = len shl 1
+            out[k] = re * re + im * im
         }
+        return out
     }
-
-    private fun applyMelFilters(power: FloatArray, mel: Array<FloatArray>, frame: Int) {
-        val sampleRate = 16000.0
-        val minMel = hzToMel(0.0); val maxMel = hzToMel(sampleRate / 2)
-        val melPoints = DoubleArray(N_MELS + 2) { minMel + it * (maxMel - minMel) / (N_MELS + 1) }
-        val freqPoints = DoubleArray(N_MELS + 2) { melToHz(melPoints[it]) }
-        val bins = IntArray(N_MELS + 2) { ((N_FFT + 1) * freqPoints[it] / sampleRate).toInt().coerceIn(0, power.size - 1) }
-        for (m in 1..N_MELS) {
-            var s = 0f
-            for (k in bins[m - 1] until bins[m]) {
-                if (k >= power.size) break
-                s += power[k] * (k - bins[m - 1]).toFloat() / (bins[m] - bins[m - 1] + 1).toFloat()
-            }
-            for (k in bins[m] until bins[m + 1]) {
-                if (k >= power.size) break
-                s += power[k] * (bins[m + 1] - k).toFloat() / (bins[m + 1] - bins[m] + 1).toFloat()
-            }
-            mel[m - 1][frame] = s
-        }
-    }
-
-    private fun hzToMel(hz: Double) = 2595 * log10(1 + hz / 700)
-    private fun melToHz(mel: Double) = 700 * (10.0.pow(mel / 2595) - 1)
 
     // ─── BPE Token Decoder ──────────────────────────────────────────────────
 

@@ -20,8 +20,14 @@ sealed class AudioPipelineState {
     /** Transcript sent to LLM. Waiting for first token. */
     object Thinking : AudioPipelineState()
 
+    /** Speculative cognition: preparing response before user finishes speaking. */
+    object Speculating : AudioPipelineState()
+
     /** LLM is streaming. TTS is speaking the response. */
     data class Speaking(val currentSentence: String = "") : AudioPipelineState()
+
+    /** User interrupted the AI. */
+    object BargeIn : AudioPipelineState()
 
     /** An unrecoverable error occurred. */
     data class Error(val message: String) : AudioPipelineState()

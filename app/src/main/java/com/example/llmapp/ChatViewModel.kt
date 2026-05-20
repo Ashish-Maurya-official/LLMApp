@@ -164,6 +164,9 @@ class ChatViewModel : ViewModel() {
             conversationEngine = com.example.llmapp.core.voice.pipeline.ConversationEngine(
                 context = hMgr.context,
                 scope = viewModelScope,
+                onPartialTranscript = { partialText ->
+                    processIntent(ChatIntent.SetPartialTranscript(partialText))
+                },
                 onTranscript = { text ->
                     _uiState.update { it.copy(partialTranscript = "", voiceState = VoiceState.THINKING) }
                     handleSendMessage(text)

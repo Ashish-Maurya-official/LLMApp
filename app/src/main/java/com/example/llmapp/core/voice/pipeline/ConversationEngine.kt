@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.example.llmapp.core.voice.stt.VadAudioRecorder
 import com.example.llmapp.core.voice.stt.WhisperRunner
 import com.example.llmapp.core.voice.tts.FallbackTtsEngine
 import com.example.llmapp.core.voice.tts.PiperVoiceEngine
@@ -14,33 +13,33 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.example.llmapp.core.cognition.CognitiveRouter
 
 /**
- * ConversationEngine — Single, ViewModel-scoped orchestrator for live audio conversation.
+ * ConversationEngine — ViewModel-scoped orchestrator for live audio conversation.
  *
- * ## v2 Refinements:
+ * ## Architecture (v3 — Android ASR)
  *
- * ### Continuous Microphone
- *   VadAudioRecorder is started ONCE per session. After each utterance is processed,
- *   we call vadRecorder.resumeListening() instead of stop()/start().
- *   This eliminates mic indicator flickering and saves ~250ms of hardware re-init latency.
+ * Uses Android's native `SpeechRecognizer` for microphone capture, VAD, and
+ * partial results. This delegates hardware DSP (AEC, noise suppression, AGC)
+ * to the OS, eliminating custom AudioRecord buffer management.
  *
- * ### Robust STT Fallback
- *   WhisperRunner.tfliteReady is now checked directly. If TFLite is loaded but produces
- *   empty output (wrong model architecture), we permanently switch to Android ASR mode
- *   for the rest of the session and stop using the VAD recorder.
- *
- * ### TTS Race Condition Fix
- *   processTtsQueue() is now guarded by a single coroutine Job. A new Job is only started
- *   if one isn't already running — prevents concurrent speak() calls.
+ * ### Partial Transcripts
+ *   `onPartialResults` from the OS is forwarded via `onPartialTranscript` so
+ *   the UI can display streaming words in real-time as the user speaks.
  *
  * ### Barge-in
- *   VadAudioRecorder.onSpeechStart fires mid-TTS (since mic stays on).
- *   ConversationEngine immediately cancels the TTS job and clears the queue.
+ *   `onBeginningOfSpeech` from the OS triggers `handleSpeechStart()`, which
+ *   cancels any active TTS playback immediately.
+ *
+ * ### TTS Queue
+ *   LLM tokens are sentence-chunked and enqueued. A single coroutine Job
+ *   drains the queue, preventing concurrent `speak()` calls.
  */
 class ConversationEngine(
     private val context: Context,
     private val scope: CoroutineScope,
+    private val onPartialTranscript: (String) -> Unit = {},
     private val onTranscript: (String) -> Unit,
     private val onStateChanged: (AudioPipelineState) -> Unit,
     private val speechRate: Float = 0.92f
@@ -54,28 +53,18 @@ class ConversationEngine(
 
     @Volatile private var isActive = false
 
-    // ── STT: mode selection ─────────────────────────────────────────────────
-    // We detect at runtime which STT path is reliable:
-    //   useWhisperPath = true  → VadAudioRecorder + WhisperRunner (offline)
-    //   useWhisperPath = false → Android SpeechRecognizer (online, managed by OS)
-    // If TFLite produces an empty result, we flip useWhisperPath to false permanently
-    // for the session and rely on Android ASR.
-    @Volatile private var useWhisperPath = true
-    @Volatile private var tfliteFailCount = 0
-    @Volatile private var whisperHardwareStarted = false  // true after first vadRecorder.start()
-    private val TFLITE_FAIL_LIMIT = 2  // switch to Android ASR after 2 consecutive empty results
-
     private val whisperRunner = WhisperRunner(context)
-    private val vadRecorder = VadAudioRecorder(
-        onSpeechStart = ::handleSpeechStart,
-        onAudioReady  = ::handleAudioReady,
-        onLevel       = { /* could expose for waveform animation */ }
-    )
-
+    
     // ── TTS ────────────────────────────────────────────────────────────────
     private val piperEngine: PiperVoiceEngine = PiperVoiceEngine(context)
     private val fallbackEngine: FallbackTtsEngine = FallbackTtsEngine(context, speechRate)
     private val activeTts: TtsEngine get() = if (piperEngine.isAvailable()) piperEngine else fallbackEngine
+
+    // ── Pipeline Architecture Scaffolds ──────────────────────────────────────
+    private val cognitiveRouter = CognitiveRouter()
+    private val turnManager = TurnManager()
+    private val bargeInManager = BargeInManager(activeTts) // Will use activeTts dynamically inside
+    private val latencyTracker = LatencyTracker()
 
     // ── TTS streaming state ─────────────────────────────────────────────────
     private val sentenceBuffer = StringBuilder()
@@ -105,7 +94,6 @@ class ConversationEngine(
         ttsJob = null
 
         // Stop microphone hardware — full release since session is over
-        vadRecorder.stop()
         whisperRunner.stopAndroidAsr()
 
         // Reset all pipeline buffers
@@ -113,9 +101,6 @@ class ConversationEngine(
         sentenceBuffer.clear()
         isTtsSpeaking = false
         generationComplete = false
-        tfliteFailCount = 0
-        useWhisperPath = true
-        whisperHardwareStarted = false
 
         updateState(AudioPipelineState.Idle)
         Log.i(TAG, "ConversationEngine stopped")
@@ -136,12 +121,8 @@ class ConversationEngine(
         isTtsSpeaking = false
         generationComplete = false
 
-        // If we're in Whisper mode, resume listening on the same AudioRecord
-        if (isActive && useWhisperPath) {
-            vadRecorder.resumeListening()
-            updateState(AudioPipelineState.Listening)
-        } else if (isActive) {
-            // Android ASR mode: start a new ASR session
+        // Android ASR mode: start a new ASR session
+        if (isActive) {
             beginListeningAndroidAsr()
         }
     }
@@ -150,44 +131,35 @@ class ConversationEngine(
 
     /**
      * Entry point for starting/resuming the listening loop.
-     * - First call per session: initializes hardware (vadRecorder.start / ASR)
-     * - Subsequent calls: resumes from PAUSED state (no hardware churn)
      */
     private fun beginListening() {
         updateState(AudioPipelineState.Listening)
-
-        if (useWhisperPath) {
-            beginListeningWhisper()
-        } else {
-            beginListeningAndroidAsr()
-        }
-    }
-
-    private fun beginListeningWhisper() {
-        scope.launch(Dispatchers.IO) {
-            if (!whisperHardwareStarted) {
-                // First call: start AudioRecord hardware for the session
-                whisperHardwareStarted = true
-                vadRecorder.start(this)
-            } else {
-                // Subsequent calls: mic is already running (PAUSED), just resume
-                vadRecorder.resumeListening()
-            }
-        }
+        beginListeningAndroidAsr()
     }
 
     private fun beginListeningAndroidAsr() {
         Log.d(TAG, "Android ASR listening mode")
         mainHandler.post {
-            whisperRunner.startAndroidAsr { text ->
-                if (!isActive) return@startAndroidAsr
-                if (text.isNotBlank()) {
-                    handleTranscript(text)
-                } else {
-                    // Restart ASR on empty result (user may not have spoken)
-                    if (isActive) beginListeningAndroidAsr()
+            whisperRunner.startAndroidAsr(
+                onFinal = { text ->
+                    if (!isActive) return@startAndroidAsr
+                    if (text.isNotBlank()) {
+                        handleTranscript(text)
+                    } else {
+                        // Restart ASR on empty result (user may not have spoken)
+                        if (isActive) beginListeningAndroidAsr()
+                    }
+                },
+                onPartial = { partialText ->
+                    if (!isActive) return@startAndroidAsr
+                    updateState(AudioPipelineState.Transcribing())
+                    onPartialTranscript(partialText)
+                },
+                onSpeechStart = {
+                    if (!isActive) return@startAndroidAsr
+                    handleSpeechStart()
                 }
-            }
+            )
         }
     }
 
@@ -197,9 +169,13 @@ class ConversationEngine(
      * we immediately stop it. This works because the mic is ALWAYS on.
      */
     private fun handleSpeechStart() {
+        turnManager.onUserStartSpeaking()
+        latencyTracker.onVadStart()
         if (isTtsSpeaking) {
             Log.d(TAG, "BARGE-IN: speech detected mid-TTS — stopping playback")
-            activeTts.stop()
+            updateState(AudioPipelineState.BargeIn)
+            bargeInManager.handleBargeIn()
+            
             ttsJob?.cancel()
             ttsJob = null
             synchronized(ttsQueue) { ttsQueue.clear() }
@@ -210,43 +186,15 @@ class ConversationEngine(
         updateState(AudioPipelineState.Capturing())
     }
 
-    /**
-     * Called by VadAudioRecorder when a complete utterance is ready.
-     * VadAudioRecorder has already transitioned to PAUSED — mic stays alive.
-     */
-    private fun handleAudioReady(audio: ShortArray) {
-        // Mic is already PAUSED by VadAudioRecorder — no hardware stop needed
-        updateState(AudioPipelineState.Transcribing())
 
-        scope.launch(Dispatchers.IO) {
-            val transcript = whisperRunner.transcribe(audio)
-
-            when {
-                transcript.isNotBlank() -> {
-                    tfliteFailCount = 0  // reset failure counter on success
-                    handleTranscript(transcript)
-                }
-                tfliteFailCount < TFLITE_FAIL_LIMIT -> {
-                    tfliteFailCount++
-                    Log.w(TAG, "TFLite empty result ($tfliteFailCount/$TFLITE_FAIL_LIMIT) — resuming VAD")
-                    if (isActive) {
-                        vadRecorder.resumeListening()
-                        updateState(AudioPipelineState.Listening)
-                    }
-                }
-                else -> {
-                    // TFLite has failed too many times — permanently switch to Android ASR
-                    Log.w(TAG, "TFLite failed $TFLITE_FAIL_LIMIT times — permanently switching to Android ASR")
-                    useWhisperPath = false
-                    vadRecorder.stop()  // release mic so Android ASR can use it
-                    if (isActive) beginListeningAndroidAsr()
-                }
-            }
-        }
-    }
 
     private fun handleTranscript(text: String) {
         Log.i(TAG, "Transcript: \"$text\"")
+        latencyTracker.onRequestSent()
+        
+        // Pass to cognitive layer (scaffold)
+        cognitiveRouter.route(text)
+        
         updateState(AudioPipelineState.Thinking)
         resetTtsPipeline()
         mainHandler.post { onTranscript(text) }
@@ -305,6 +253,12 @@ class ConversationEngine(
                     if (!isActive) break
 
                     Log.d(TAG, "TTS → \"${sentence.take(80)}\"")
+                    
+                    if (sentenceBuffer.isEmpty() && sentence == synchronized(ttsQueue) { ttsQueue.firstOrNull() }) {
+                        latencyTracker.onFirstTokenReceived()
+                    }
+                    
+                    turnManager.onAiStartSpeaking()
                     updateState(AudioPipelineState.Speaking(sentence))
 
                     activeTts.speak(text = sentence)
@@ -324,13 +278,8 @@ class ConversationEngine(
                 generationComplete = false
                 delay(250L)  // brief natural pause before mic reopens
 
-                if (useWhisperPath) {
-                    vadRecorder.resumeListening()
-                    updateState(AudioPipelineState.Listening)
-                } else {
-                    beginListeningAndroidAsr()
-                    updateState(AudioPipelineState.Listening)
-                }
+                beginListeningAndroidAsr()
+                updateState(AudioPipelineState.Listening)
             }
         }
     }

@@ -210,12 +210,16 @@ class ConversationEngine(
     fun feedToken(token: String, isDone: Boolean) {
         sentenceBuffer.append(token)
 
-        val text = sentenceBuffer.toString()
-        val boundary = SentenceChunker.findBoundary(text)
-        if (boundary > 0) {
-            val sentence = SentenceChunker.stripMarkdown(text.substring(0, boundary)).trim()
-            sentenceBuffer.delete(0, boundary)
-            if (sentence.isNotBlank()) enqueue(sentence)
+        while (true) {
+            val text = sentenceBuffer.toString()
+            val boundary = SentenceChunker.findBoundary(text)
+            if (boundary > 0) {
+                val sentence = SentenceChunker.stripMarkdown(text.substring(0, boundary)).trim()
+                sentenceBuffer.delete(0, boundary)
+                if (sentence.isNotBlank()) enqueue(sentence)
+            } else {
+                break
+            }
         }
 
         if (isDone) {
@@ -242,8 +246,8 @@ class ConversationEngine(
         if (isTtsSpeaking) return
         if (synchronized(ttsQueue) { ttsQueue.isEmpty() }) return
 
+        isTtsSpeaking = true
         ttsJob = scope.launch {
-            isTtsSpeaking = true
             try {
                 while (true) {
                     val sentence = synchronized(ttsQueue) {
@@ -287,6 +291,7 @@ class ConversationEngine(
     private fun isCoroutineActive(): Boolean = scope.isActive
 
     private fun resetTtsPipeline() {
+        activeTts.stop()
         ttsJob?.cancel()
         ttsJob = null
         synchronized(ttsQueue) { ttsQueue.clear() }

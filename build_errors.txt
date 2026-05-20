@@ -32,18 +32,7 @@
 > Task :app:writeDebugAppMetadata UP-TO-DATE
 > Task :app:writeDebugSigningConfigVersions UP-TO-DATE
 > Task :app:kspDebugKotlin
-
 > Task :app:compileDebugKotlin
-w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/ChatViewModel.kt:929:167 Java type mismatch: inferred type is 'Nothing?', but 'String' was expected.
-w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/ChatViewModel.kt:929:199 Java type mismatch: inferred type is 'Nothing?', but 'String' was expected.
-w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/FileUtils.kt:91:62 Unnecessary non-null assertion (!!) on a non-null receiver of type 'String'.
-w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/MainActivity.kt:60:46 'val defaultDisplay: Display!' is deprecated. Deprecated in Java.
-w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/core/history/ChatHistoryManager.kt:167:54 Java type mismatch: inferred type is 'Nothing?', but 'String' was expected.
-w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/core/history/ChatHistoryManager.kt:168:60 Java type mismatch: inferred type is 'Nothing?', but 'String' was expected.
-w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/core/retrieval/EmbeddingManager.kt:75:56 Unchecked cast of 'Any!' to 'Array<Array<FloatArray>>'.
-w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/core/runtime/CognitiveTaskScheduler.kt:219:55 Unnecessary non-null assertion (!!) on a non-null receiver of type 'MatchResult'.
-w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/ui/settings/utils/TtsUtils.kt:33:24 Unnecessary safe call on a non-null receiver of type 'TextToSpeech'.
-
 > Task :app:compileDebugJavaWithJavac UP-TO-DATE
 > Task :app:dexBuilderDebug
 > Task :app:mergeDebugGlobalSynthetics UP-TO-DATE
@@ -54,5 +43,5 @@ w: file:///C:/Users/ashis/Desktop/LLMApp/app/src/main/java/com/example/llmapp/ui
 > Task :app:createDebugApkListingFileRedirect UP-TO-DATE
 > Task :app:assembleDebug
 
-BUILD SUCCESSFUL in 53s
+BUILD SUCCESSFUL in 10s
 37 actionable tasks: 5 executed, 32 up-to-date

@@ -58,7 +58,7 @@ class ConversationEngine(
     // ── TTS ────────────────────────────────────────────────────────────────
     private val piperEngine: PiperVoiceEngine = PiperVoiceEngine(context)
     private val fallbackEngine: FallbackTtsEngine = FallbackTtsEngine(context, speechRate)
-    private val activeTts: TtsEngine get() = if (piperEngine.isAvailable()) piperEngine else fallbackEngine
+    private val activeTts: TtsEngine get() = fallbackEngine
 
     // ── Pipeline Architecture Scaffolds ──────────────────────────────────────
     private val cognitiveRouter = CognitiveRouter()

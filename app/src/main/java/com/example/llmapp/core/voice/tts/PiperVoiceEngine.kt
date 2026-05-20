@@ -173,6 +173,7 @@ class PiperVoiceEngine(private val context: Context) : TtsEngine {
         try {
             if (track.state != AudioTrack.STATE_INITIALIZED) return
             track.play()
+            Log.d(TAG, "Playing PCM of size ${pcm.size}. Expected duration: ${pcm.size / 22050f} seconds")
             var offset = 0
             val chunkSize = 4096
             while (offset < pcm.size && !isStopped) {
@@ -184,6 +185,7 @@ class PiperVoiceEngine(private val context: Context) : TtsEngine {
                 // Wait for all queued audio to finish playing
                 track.stop()
             }
+            Log.d(TAG, "Finished writing PCM")
         } catch (e: Exception) {
             Log.e(TAG, "AudioTrack playback error: ${e.message}")
         }

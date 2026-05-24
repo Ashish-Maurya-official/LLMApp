@@ -1,7 +1,6 @@
 package com.example.llmapp.core.inference
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import com.google.ai.edge.litertlm.*
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -21,88 +20,19 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         private const val TAG = "LlmInferenceManager"
 
         /**
-         * Pre-flight check: verify that the device can actually use a GPU delegate.
-         * LiteRT's GPU delegate requires OpenCL or OpenGL ES 3.1+.
-         * If the native library isn't loadable, attempting Backend.GPU() will
-         * cause an uncatchable native SIGABRT — killing the process instantly.
-         */
-        fun isGpuDelegateAvailable(): Boolean {
-            return try {
-                System.loadLibrary("OpenCL")
-                Log.d(TAG, "[GPU_CHECK] OpenCL library loaded successfully")
-                true
-            } catch (e: UnsatisfiedLinkError) {
-                Log.w(TAG, "[GPU_CHECK] OpenCL library NOT found: ${e.message}")
-                // Fallback: check OpenGL ES version
-                try {
-                    val glesVersion = android.opengl.GLES31.GL_VERSION
-                    Log.d(TAG, "[GPU_CHECK] OpenGL ES 3.1 header available (compile-time check)")
-                    true // OpenGL ES 3.1 available at compile time; runtime may still fail
-                } catch (e2: Throwable) {
-                    Log.w(TAG, "[GPU_CHECK] OpenGL ES 3.1 also unavailable: ${e2.message}")
-                    false
-                }
-            } catch (e: SecurityException) {
-                Log.w(TAG, "[GPU_CHECK] Security exception loading OpenCL: ${e.message}")
-                false
-            }
-        }
-
-        /**
-         * Detects if the device is MediaTek.
-         */
-        fun isMediaTek(): Boolean {
-            val hardware = Build.HARDWARE.lowercase()
-            val board = Build.BOARD.lowercase()
-            val soc = try { Build.SOC_MODEL.lowercase() } catch (_: Throwable) { "" }
-            val manufacturer = Build.SOC_MANUFACTURER.lowercase()
-            return hardware.contains("mt") ||
-                    board.contains("mt") ||
-                    soc.contains("dimensity") ||
-                    soc.contains("helio") ||
-                    manufacturer.contains("mediatek")
-        }
-
-        /**
-         * GPU safety check.
-         * 
-         * Previous versions blanket-blocked all MediaTek devices, but testing confirms
-         * GPU (Backend.GPU / OpenCL) works correctly on MediaTek Dimensity chips
-         * (including MT6897/Dimensity 8300). The loadEngineWithFallback chain handles
-         * any GPU initialization failures safely via exception → CPU fallback.
-         * 
-         * Only return true here if a specific device/ROM combination is known to cause
-         * uncatchable native SIGABRT crashes during Engine.initialize().
-         */
-        fun shouldAvoidGpu(): Boolean {
-            // Currently no devices are hard-blocked. The fallback chain handles failures.
-            // If a specific device causes native crashes, add it here:
-            // val model = Build.MODEL.lowercase()
-            // if (model.contains("some_known_bad_device")) return true
-            return !isGpuDelegateAvailable()
-        }
-
-        /**
          * Resolves the effective backend for a given preference.
-         * "Auto" → GPU (if OpenCL available), CPU as fallback.
-         *          NOTE: NPU is NOT auto-selected because standard models from
-         *          litert-community lack NeuroPilot-compiled ops (TF_LITE_AUX).
-         * "GPU"  → GPU if OpenCL available, else CPU.
-         * "NPU"  → NPU directly (user explicitly chose it, let fallback chain handle).
-         * "CPU"  → CPU directly.
+         * No hardcoded device blocking — the loadEngineWithFallback chain
+         * handles any initialization failures gracefully via exception → CPU fallback.
+         *
+         * "Auto" → "GPU" (fallback chain will try GPU → CPU)
+         * "GPU"  → "GPU" (fallback chain will try GPU → CPU)
+         * "NPU"  → "NPU" (fallback chain will try NPU → CPU)
+         * "CPU"  → "CPU" (no fallback needed)
          */
         fun resolveBackendPreference(preferred: String): String {
             return when (preferred) {
-                "Auto" -> {
-                    if (isGpuDelegateAvailable()) "GPU" else "CPU"
-                }
-                "GPU" -> {
-                    if (!isGpuDelegateAvailable()) {
-                        Log.w(TAG, "[RESOLVE] GPU requested but OpenCL/GL unavailable. Falling back to CPU.")
-                        "CPU"
-                    } else "GPU"
-                }
-                else -> preferred // "NPU" or "CPU" passed through
+                "Auto" -> "GPU" // Let the fallback chain try GPU first, then CPU
+                else -> preferred // Pass through: GPU, NPU, CPU — all handled by fallback chain
             }
         }
     }

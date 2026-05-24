@@ -875,7 +875,7 @@ class ChatViewModel : ViewModel() {
     /**
      * Detects if a backend fallback occurred by comparing what the user requested
      * vs what was actually loaded. Returns a user-friendly message or null if no fallback.
-     * Includes the actual caught error message when available.
+     * Shows the real caught error — no hardcoded device-specific guesses.
      */
     private fun detectFallback(
         requestedBackend: String,
@@ -886,49 +886,17 @@ class ChatViewModel : ViewModel() {
 
         val caughtError = loadResult?.fallbackError
 
-        // "Auto" is expected to resolve to any backend — but still inform the user what was chosen
-        if (requestedBackend == "Auto") {
-            val resolved = com.example.llmapp.core.inference.LlmInferenceManager.resolveBackendPreference("Auto")
-            return if (actualBackend != resolved) {
-                buildString {
-                    append("Auto mode resolved to $resolved, but it failed to initialize. ")
-                    append("The model was loaded on $actualBackend instead.")
-                    if (caughtError != null) {
-                        append("\n\nError: ${caughtError.message}")
-                    }
-                }
-            } else {
-                null // Auto resolved correctly, no fallback
-            }
-        }
+        // For "Auto", the resolved target is GPU — if we ended up on CPU, that's a fallback
+        val displayRequested = if (requestedBackend == "Auto") "Auto (GPU)" else requestedBackend
 
-        // Explicit backend was requested but a different one was used
-        val reason = buildString {
-            when (requestedBackend) {
-                "GPU" -> {
-                    if (!com.example.llmapp.core.inference.LlmInferenceManager.isGpuDelegateAvailable()) {
-                        append("OpenCL/OpenGL ES 3.1 support was not detected on this device. ")
-                        append("The GPU delegate requires these libraries to function.")
-                    } else {
-                        append("The GPU delegate failed to initialize during model loading. ")
-                        append("This may be caused by insufficient GPU memory, driver incompatibility, or unsupported model operations.")
-                    }
-                }
-                "NPU" -> {
-                    append("The NPU (NeuroPilot) backend failed to initialize. ")
-                    append("Standard models from litert-community do not include NeuroPilot-compiled ops (TF_LITE_AUX). ")
-                    append("NPU requires a model specifically compiled with the MediaTek NeuroPilot SDK.")
-                }
-                else -> append("The $requestedBackend backend was unavailable.")
-            }
-
-            // Append the real error message if we have one
+        return buildString {
+            append("Requested: $displayRequested → Loaded on: $actualBackend\n\n")
+            append("The $displayRequested backend failed to initialize. ")
+            append("The model was loaded on $actualBackend instead.")
             if (caughtError != null) {
                 append("\n\nError: ${caughtError.message}")
             }
         }
-
-        return "Requested: $requestedBackend → Loaded on: $actualBackend\n\n$reason"
     }
 
     // ── Send message ──────────────────────────────────────────────────────────

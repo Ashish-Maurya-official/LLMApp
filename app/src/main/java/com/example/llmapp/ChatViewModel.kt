@@ -907,18 +907,21 @@ class ChatViewModel : ViewModel() {
             when (requestedBackend) {
                 "GPU" -> {
                     if (com.example.llmapp.core.inference.LlmInferenceManager.shouldAvoidGpu()) {
-                        append("Your device uses a MediaTek chipset where the GPU delegate is unstable for LLM workloads. ")
+                        append("Your device uses a non-flagship MediaTek chipset where the GPU delegate can cause native crashes. ")
                         append("The GPU backend was blocked before loading (pre-flight check). ")
-                        append("Consider using NPU (NeuroPilot) for better performance on this device.")
+                        append("Only flagship Dimensity chips (9200+) are allowed to attempt GPU.")
                     } else if (!com.example.llmapp.core.inference.LlmInferenceManager.isGpuDelegateAvailable()) {
                         append("OpenCL/OpenGL ES 3.1 support was not detected on this device. ")
                         append("The GPU delegate requires these libraries to function.")
                     } else {
-                        append("The GPU delegate failed to initialize during model loading.")
+                        append("The GPU delegate failed to initialize during model loading. ")
+                        append("This may be caused by insufficient GPU memory, driver incompatibility, or unsupported model operations.")
                     }
                 }
                 "NPU" -> {
-                    append("The NPU (NeuroPilot) backend failed to initialize.")
+                    append("The NPU (NeuroPilot) backend failed to initialize. ")
+                    append("Standard models from litert-community do not include NeuroPilot-compiled ops (TF_LITE_AUX). ")
+                    append("NPU requires a model specifically compiled with the MediaTek NeuroPilot SDK.")
                 }
                 else -> append("The $requestedBackend backend was unavailable.")
             }

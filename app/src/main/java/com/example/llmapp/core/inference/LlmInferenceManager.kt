@@ -49,40 +49,68 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         }
 
         /**
-         * Chipset-aware GPU deny-list.
-         * MediaTek Dimensity GPU delegates have known instability with LiteRT LLM workloads.
-         * Their recommended path is NPU (NeuroPilot), not GPU.
+         * Detects if the device is MediaTek.
          */
-        fun shouldAvoidGpu(): Boolean {
+        fun isMediaTek(): Boolean {
             val hardware = Build.HARDWARE.lowercase()
             val board = Build.BOARD.lowercase()
             val soc = try { Build.SOC_MODEL.lowercase() } catch (_: Throwable) { "" }
             val manufacturer = Build.SOC_MANUFACTURER.lowercase()
-
-            val isMediaTek = hardware.contains("mt") ||
+            return hardware.contains("mt") ||
                     board.contains("mt") ||
                     soc.contains("dimensity") ||
+                    soc.contains("helio") ||
                     manufacturer.contains("mediatek")
+        }
 
-            if (isMediaTek) {
-                Log.w(TAG, "[GPU_CHECK] MediaTek chipset detected (hw=$hardware, soc=$soc). GPU delegate is unstable for LLM workloads. Recommending NPU or CPU.")
+        /**
+         * Detects if the MediaTek chipset is a flagship Dimensity (9200+).
+         * Flagship chips have mature Mali Immortalis GPUs that handle LiteRT GPU delegate
+         * well enough for the fallback chain to catch any failures safely.
+         */
+        private fun isMediaTekFlagship(): Boolean {
+            val soc = try { Build.SOC_MODEL.lowercase() } catch (_: Throwable) { "" }
+            // Flagship Dimensity: 9200, 9300, 9400, 9500+ series
+            val flagshipPattern = Regex("dimensity\\s*(9[2-9]\\d{2}|[1-9]\\d{4,})")
+            return flagshipPattern.containsMatchIn(soc)
+        }
+
+        /**
+         * Chipset-aware GPU deny-list.
+         * - Flagship Dimensity (9200+): GPU allowed — mature Immortalis GPUs, fallback chain
+         *   will catch any failures safely via exception handling.
+         * - Low/mid-tier MediaTek (Helio, Dimensity 700-8300): GPU blocked — OpenCL drivers
+         *   on these chips can cause native SIGABRT crashes that can't be caught in JVM.
+         * - Non-MediaTek: GPU allowed if OpenCL/OpenGL available.
+         */
+        fun shouldAvoidGpu(): Boolean {
+            if (!isMediaTek()) return false
+
+            val soc = try { Build.SOC_MODEL.lowercase() } catch (_: Throwable) { "" }
+
+            if (isMediaTekFlagship()) {
+                Log.d(TAG, "[GPU_CHECK] Flagship MediaTek detected (soc=$soc). GPU allowed with fallback chain.")
+                return false // Allow GPU — fallback chain handles failures
             }
-            return isMediaTek
+
+            Log.w(TAG, "[GPU_CHECK] Non-flagship MediaTek detected (soc=$soc). GPU delegate blocked — risk of native crashes.")
+            return true
         }
 
         /**
          * Resolves the effective backend for a given preference.
-         * "Auto" → NPU on MediaTek, GPU if available elsewhere, CPU as final fallback.
-         * "GPU"  → GPU if safe, else CPU.
-         * "NPU"  → NPU directly.
+         * "Auto" → GPU (if available), CPU as fallback.
+         *          NOTE: NPU is NOT auto-selected because standard models from
+         *          litert-community lack NeuroPilot-compiled ops (TF_LITE_AUX).
+         * "GPU"  → GPU if safe/available, else CPU.
+         * "NPU"  → NPU directly (user explicitly chose it, let the fallback chain handle failures).
          * "CPU"  → CPU directly.
          */
         fun resolveBackendPreference(preferred: String): String {
             return when (preferred) {
                 "Auto" -> {
                     when {
-                        shouldAvoidGpu() -> "NPU"  // MediaTek: use NPU
-                        isGpuDelegateAvailable() -> "GPU"
+                        !shouldAvoidGpu() && isGpuDelegateAvailable() -> "GPU"
                         else -> "CPU"
                     }
                 }

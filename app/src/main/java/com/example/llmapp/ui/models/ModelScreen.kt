@@ -52,7 +52,7 @@ fun ModelScreen(
                 .map { it.name }.toSet()
         }
 
-        val remote = withContext(Dispatchers.IO) { fetchRemoteModels() }
+        val remote: List<AvailableModel>? = null // withContext(Dispatchers.IO) { fetchRemoteModels() }
         val combined = if (remote != null) {
             val merged = (fallbackModels + remote).distinctBy { it.fileName }
             catalogSource = "Remote catalog synced"

@@ -46,14 +46,12 @@ class FallbackTtsEngine(
                     override fun onStart(utteranceId: String?) {}
                     override fun onDone(utteranceId: String?) {
                         if (utteranceId == currentUtteranceId) {
-                            pendingContinuation?.resume(Unit)
-                            pendingContinuation = null
+                            safeResume()
                         }
                     }
                     @Deprecated("Deprecated in Java")
                     override fun onError(utteranceId: String?) {
-                        pendingContinuation?.resume(Unit)
-                        pendingContinuation = null
+                        safeResume()
                     }
                 })
                 isReady = true
@@ -61,6 +59,14 @@ class FallbackTtsEngine(
             } else {
                 Log.e(TAG, "Android TTS initialization failed: $status")
             }
+        }
+    }
+
+    private fun safeResume() {
+        val cont = pendingContinuation
+        pendingContinuation = null
+        if (cont?.isActive == true) {
+            cont.resume(Unit)
         }
     }
 
@@ -88,8 +94,7 @@ class FallbackTtsEngine(
         try {
             tts?.stop()
         } catch (e: Exception) { /* ignore */ }
-        pendingContinuation?.resume(Unit)
-        pendingContinuation = null
+        safeResume()
     }
 
     override fun destroy() {

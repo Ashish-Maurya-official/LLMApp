@@ -72,6 +72,9 @@ class ConversationEngine(
     @Volatile private var isTtsSpeaking = false
     private val ttsQueue = ArrayDeque<String>()
     private var ttsJob: Job? = null
+    
+    // Echo rejection buffer
+    private val recentlySpokenText = StringBuilder()
 
     // ─────────────────────────────────────────────────────────────────────
 
@@ -144,15 +147,26 @@ class ConversationEngine(
             whisperRunner.startAndroidAsr(
                 onFinal = { text ->
                     if (!isActive) return@startAndroidAsr
-                    if (text.isNotBlank()) {
+                    if (text.isNotBlank() && !isTextEcho(text)) {
                         handleTranscript(text)
                     } else {
-                        // Restart ASR on empty result (user may not have spoken)
+                        // Restart ASR on empty result or echo
                         if (isActive) beginListeningAndroidAsr()
                     }
                 },
                 onPartial = { partialText ->
                     if (!isActive) return@startAndroidAsr
+                    
+                    if (isTextEcho(partialText)) {
+                        Log.d(TAG, "Echo rejected: $partialText")
+                        return@startAndroidAsr
+                    }
+                    
+                    if (isTtsSpeaking) {
+                        Log.d(TAG, "BARGE-IN: Valid user speech detected during TTS: $partialText")
+                        executeBargeIn()
+                    }
+                    
                     updateState(AudioPipelineState.Transcribing())
                     onPartialTranscript(partialText)
                 },
@@ -170,21 +184,40 @@ class ConversationEngine(
      * we immediately stop it. This works because the mic is ALWAYS on.
      */
     private fun handleSpeechStart() {
+        if (isTtsSpeaking) {
+            Log.d(TAG, "Suspicious speech detected mid-TTS. Waiting for partial transcript to verify if it's an echo.")
+            return
+        }
         turnManager.onUserStartSpeaking()
         latencyTracker.onVadStart()
-        if (isTtsSpeaking) {
-            Log.d(TAG, "BARGE-IN: speech detected mid-TTS — stopping playback")
-            updateState(AudioPipelineState.BargeIn)
-            bargeInManager.handleBargeIn()
-            
-            ttsJob?.cancel()
-            ttsJob = null
-            synchronized(ttsQueue) { ttsQueue.clear() }
-            sentenceBuffer.clear()
-            isTtsSpeaking = false
-            generationComplete = false
-        }
         updateState(AudioPipelineState.Capturing())
+    }
+
+    private fun executeBargeIn() {
+        Log.d(TAG, "Executing barge-in, stopping TTS playback")
+        turnManager.onUserStartSpeaking()
+        latencyTracker.onVadStart()
+        updateState(AudioPipelineState.BargeIn)
+        bargeInManager.handleBargeIn()
+        
+        activeTts.stop()
+        ttsJob?.cancel()
+        ttsJob = null
+        synchronized(ttsQueue) { ttsQueue.clear() }
+        sentenceBuffer.clear()
+        isTtsSpeaking = false
+        generationComplete = false
+    }
+
+    private fun isTextEcho(text: String): Boolean {
+        if (text.isBlank()) return false
+        val normalizedMic = text.lowercase().replace(Regex("[^a-z0-9 ]"), "").trim()
+        if (normalizedMic.length < 3) return false // Too short to safely classify as echo
+
+        val recentText = synchronized(recentlySpokenText) { recentlySpokenText.toString() }
+        val normalizedTts = recentText.lowercase().replace(Regex("[^a-z0-9 ]"), "").trim()
+
+        return normalizedTts.contains(normalizedMic)
     }
 
 
@@ -271,6 +304,13 @@ class ConversationEngine(
                     turnManager.onAiStartSpeaking()
                     updateState(AudioPipelineState.Speaking(sentence))
 
+                    synchronized(recentlySpokenText) {
+                        recentlySpokenText.append(" ").append(sentence)
+                        if (recentlySpokenText.length > 500) {
+                            recentlySpokenText.delete(0, recentlySpokenText.length - 500)
+                        }
+                    }
+
                     activeTts.speak(text = sentence)
 
                     // Check for coroutine cancellation after each sentence
@@ -304,6 +344,7 @@ class ConversationEngine(
         sentenceBuffer.clear()
         generationComplete = false
         isTtsSpeaking = false
+        synchronized(recentlySpokenText) { recentlySpokenText.clear() }
     }
 
     private fun updateState(newState: AudioPipelineState) {

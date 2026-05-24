@@ -95,7 +95,6 @@ class LlmInferenceManager(private val context: Context) {
 
     fun stopGeneration() {
         currentGenerationJob?.cancel()
-        currentGenerationJob = null
         Log.d("LlmInferenceManager", "Generation stopped by user.")
     }
 
@@ -107,33 +106,35 @@ class LlmInferenceManager(private val context: Context) {
             } catch (e: Exception) {
                 Log.w("LlmInferenceManager", "Error joining previous generation job: ${e.message}")
             }
-            inferenceMutex.withLock {
+            val freshConv = inferenceMutex.withLock {
                 // Ensure native threads are completely halted before closing native conversation refs
                 delay(200)
                 resetConversation()
-                val freshConv = conversation ?: run {
-                    _outputFlow.emit(Triple("Error: Model not initialized", true, generationId))
-                    return@withLock
-                }
+                conversation
+            }
+            
+            if (freshConv == null) {
+                _outputFlow.emit(Triple("Error: Model not initialized", true, generationId))
+                return@launch
+            }
 
-                var completionEmitted = false
-                try {
-                    freshConv.sendMessageAsync(prompt)
-                        .onCompletion {
-                            if (!completionEmitted) {
-                                completionEmitted = true
-                                _outputFlow.emit(Triple("", true, generationId))
-                            }
+            var completionEmitted = false
+            try {
+                freshConv.sendMessageAsync(prompt)
+                    .onCompletion {
+                        if (!completionEmitted) {
+                            completionEmitted = true
+                            _outputFlow.emit(Triple("", true, generationId))
                         }
-                        .collect { chunk ->
-                            _outputFlow.emit(Triple(chunk.toString(), false, generationId))
-                        }
-                } catch (t: Throwable) {
-                    android.util.Log.e("LlmInferenceManager", "Generation error", t)
-                    if (!completionEmitted) {
-                        completionEmitted = true
-                        _outputFlow.emit(Triple("Error: ${t.message}", true, generationId))
                     }
+                    .collect { chunk ->
+                        _outputFlow.emit(Triple(chunk.toString(), false, generationId))
+                    }
+            } catch (t: Throwable) {
+                android.util.Log.e("LlmInferenceManager", "Generation error", t)
+                if (!completionEmitted) {
+                    completionEmitted = true
+                    _outputFlow.emit(Triple("Error: ${t.message}", true, generationId))
                 }
             }
         }

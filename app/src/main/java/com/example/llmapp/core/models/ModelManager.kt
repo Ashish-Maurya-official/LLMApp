@@ -25,33 +25,40 @@ class ModelManager(private val context: Context) {
             size = "1.8 GB"
         ),
         LlmModelInfo(
-            name = "Gemma 2 2B (IT)",
-            description = "High-performance model optimized for mobile. Fast and smart.",
-            url = "https://huggingface.co/litert-community/gemma-2-2b-it-litert-lm/resolve/main/gemma-2-2b-it.litertlm",
-            fileName = "gemma-2-2b.litertlm",
-            size = "1.4 GB"
-        ),
-        LlmModelInfo(
-            name = "Falcon 1B",
-            description = "Ultra-lightweight model for low-memory devices.",
-            url = "https://huggingface.co/tiiuae/falcon-1b-it-gpu-int4/resolve/main/falcon-1b-it-gpu-int4.bin",
-            fileName = "falcon-1b-it.bin",
-            size = "0.9 GB"
-        ),
-        LlmModelInfo(
-            name = "MiniLM Embedding (Semantic Search)",
-            description = "Crucial for long-term memory and relevant retrieval. Highly recommended.",
-            url = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx",
-            fileName = "all-minilm-l6-v2.onnx",
-            size = "22 MB"
-        ),
-        LlmModelInfo(
-            name = "MiniLM Vocab",
-            description = "Vocabulary for the embedding model.",
-            url = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/vocab.txt",
-            fileName = "all-minilm-l6-v2-vocab.txt",
-            size = "0.2 MB"
-        )
+    name = "Gemma 4 E2B (IT)",
+    description = "The absolute latest generation (April 2026). Optimized for LiteRT-LM with top reasoning.",
+    url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true",
+    fileName = "gemma-4-e2b.litertlm",
+    size = "2.6 GB"
+),
+LlmModelInfo(
+    name = "Gemma 4 E4B (IT)",
+    description = "Larger, highly capable sibling to E2B. Stronger reasoning capabilities at the cost of higher RAM footprint.",
+    url = "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm?download=true",
+    fileName = "gemma-4-e4b.litertlm",
+    size = "3.7 GB"
+),
+LlmModelInfo(
+    name = "Qwen 2.5 1.5B (IT)",
+    description = "Excellent balance of speed and capability. Features 8-bit quantization and multi-prefill sequence packaging.",
+    url = "https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm?download=true",
+    fileName = "qwen-2.5-1.5b-instruct.litertlm",
+    size = "1.6 GB"
+),
+LlmModelInfo(
+    name = "DeepSeek R1 Distill Qwen 1.5B",
+    description = "Edge-optimized distillation of DeepSeek's reasoning model, packaged specifically for the LiteRT-LM runtime.",
+    url = "https://huggingface.co/litert-community/DeepSeek-R1-Distill-Qwen-1.5B/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B_multi-prefill-seq_q8_ekv4096.litertlm?download=true",
+    fileName = "deepseek-r1-distill-qwen-1.5b.litertlm",
+    size = "1.8 GB"
+),
+LlmModelInfo(
+    name = "Phi-4-Mini Instruct",
+    description = "Microsoft's highly optimized SLM for mobile. 8-bit quantized configuration with a 4096 context window.",
+    url = "https://huggingface.co/litert-community/Phi-4-mini-instruct/resolve/main/Phi-4-mini-instruct_multi-prefill-seq_q8_ekv4096.litertlm?download=true",
+    fileName = "phi-4-mini-instruct.litertlm",
+    size = "3.9 GB"
+),
     )
 
     fun getDownloadedModels(): List<File> {

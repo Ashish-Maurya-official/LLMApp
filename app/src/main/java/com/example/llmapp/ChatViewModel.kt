@@ -383,8 +383,11 @@ class ChatViewModel : ViewModel() {
                     if (newTts.isNotBlank()) {
                         onNewToken?.invoke(newTts, event.isDone)
                         onNewLlmToken(newTts, event.isDone)
+                    } else if (event.isDone) {
+                        onNewToken?.invoke("", true)
+                        onNewLlmToken("", true)
                     }
-                } else if (event.isDone && parsed.visibleText.isNotEmpty()) {
+                } else if (event.isDone) {
                     onNewToken?.invoke("", true)
                     onNewLlmToken("", true)
                 }
@@ -424,6 +427,10 @@ class ChatViewModel : ViewModel() {
                 if (parsed.visibleText.isNotBlank()) {
                     memoryConsolidator?.enqueueTurn(currentUserQuery, parsed.visibleText)
                 }
+                
+                // Guarantee the voice pipeline knows the generation has fully finished
+                onNewToken?.invoke("", true)
+                onNewLlmToken("", true)
 
                 _streamingState.value = StreamingState()
                 _uiState.update { it.copy(isGenerating = false) }
@@ -785,6 +792,9 @@ class ChatViewModel : ViewModel() {
                 _uiState.update { it.copy(voiceState = intent.state) }
                 if (intent.state == VoiceState.LISTENING) {
                     conversationEngine?.interrupt()
+                    if (_uiState.value.isGenerating) {
+                        processIntent(ChatIntent.StopGeneration)
+                    }
                 }
             }
             is ChatIntent.SetPartialTranscript -> _uiState.update { it.copy(partialTranscript = intent.text) }
@@ -805,7 +815,12 @@ class ChatViewModel : ViewModel() {
 
     // ── Send message ──────────────────────────────────────────────────────────
     private fun handleSendMessage(text: String) {
-        if (text.isBlank() || _uiState.value.isGenerating) return
+        if (text.isBlank()) return
+        
+        // Stop any ongoing generation (e.g. from a barge-in or manual tap) before starting the new one
+        if (_uiState.value.isGenerating) {
+            processIntent(ChatIntent.StopGeneration)
+        }
         
         socioCognitiveRegulator.recordUserInteraction()
         contextEntropyMonitor.analyzeEntropy(text)

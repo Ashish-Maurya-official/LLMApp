@@ -107,8 +107,9 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
     }
 
     fun emit(event: CognitiveEvent) {
-        scope.launch(Dispatchers.Default) {
-            _events.emit(event)
+        val success = _events.tryEmit(event)
+        if (!success) {
+            Log.e("CognitiveTaskScheduler", "Failed to emit event: $event")
         }
     }
 

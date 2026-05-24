@@ -1,10 +1,8 @@
 package com.example.llmapp.ui.chat.composables
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
@@ -27,8 +25,7 @@ fun ChatTopBar(
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
-    var backendExpanded by remember { mutableStateOf(false) }
-    val currentBackend = uiState.activeBackend ?: settingsManager?.mainHardwareBackend ?: "Auto"
+    val activeBackend = uiState.activeBackend
 
     TopAppBar(
         title = { Text("Chat") },
@@ -41,55 +38,19 @@ fun ChatTopBar(
             }
         },
         actions = {
-            // Backend Selection Dropdown
-            Box {
+            // Read-only backend status chip (no selection — that's done in ModelScreen now)
+            if (activeBackend != null) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.secondaryContainer,
-                    modifier = Modifier
-                        .padding(end = 8.dp)
-                        .clickable { 
-                            focusManager.clearFocus()
-                            backendExpanded = true 
-                        }
+                    modifier = Modifier.padding(end = 8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = currentBackend,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Default.ArrowDropDown,
-                            contentDescription = "Select Backend",
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
-                
-                DropdownMenu(
-                    expanded = backendExpanded,
-                    onDismissRequest = { backendExpanded = false }
-                ) {
-                    listOf("Auto", "GPU", "CPU").forEach { backend ->
-                        DropdownMenuItem(
-                            text = { Text(backend) },
-                            onClick = {
-                                settingsManager?.mainHardwareBackend = backend
-                                backendExpanded = false
-                                // Trigger a reload of the model with the new backend
-                                val currentModel = settingsManager?.defaultMainModelPath
-                                if (!currentModel.isNullOrEmpty()) {
-                                    onIntent(ChatIntent.LoadModel(currentModel, false))
-                                }
-                            }
-                        )
-                    }
+                    Text(
+                        text = activeBackend,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
                 }
             }
 

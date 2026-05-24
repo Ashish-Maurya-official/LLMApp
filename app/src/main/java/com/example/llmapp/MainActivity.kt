@@ -243,26 +243,41 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                             composable("models") {
+                                val uiState by viewModel.uiState.collectAsState()
                                 com.example.llmapp.ui.models.ModelScreen(
                                     modelDownloader = modelDownloader,
                                     onModelSelected = { path, isOrch ->
                                         viewModel.processIntent(ChatIntent.LoadModel(path, isOrch))
-                                        navController.navigate("chat") {
-                                            popUpTo(navController.graph.startDestinationId) { saveState = true }
-                                            launchSingleTop = true
-                                            restoreState = true
-                                        }
                                     },
                                     onModelUnloaded = { path, isOrch ->
                                         viewModel.processIntent(ChatIntent.UnloadModel(path, isOrch))
                                     },
+                                    onModelSelectedWithBackend = { path, isOrch, backend ->
+                                        // Save the selected backend to settings before loading
+                                        if (isOrch) {
+                                            settingsManager.orchestratorHardwareBackend = backend
+                                        } else {
+                                            settingsManager.mainHardwareBackend = backend
+                                        }
+                                        viewModel.processIntent(ChatIntent.LoadModel(path, isOrch))
+                                    },
+                                    onClearError = {
+                                        viewModel.clearModelError()
+                                    },
+                                    onClearFallback = {
+                                        viewModel.clearFallbackWarning()
+                                    },
                                     openDrawer = { scope.launch { drawerState.open() } },
                                     onOpenEvaluation = { navController.navigate("evaluation") },
                                     settingsManager = settingsManager,
-                                    isMainModelLoaded = llmInferenceManager?.isMainModelLoaded == true,
-                                    isOrchestratorLoaded = llmInferenceManager?.isOrchestratorLoaded == true,
-                                    activeMainBackend = llmInferenceManager?.activeMainBackend,
-                                    activeOrchestratorBackend = llmInferenceManager?.activeOrchestratorBackend
+                                    isMainModelLoaded = llmInferenceManager.isMainModelLoaded,
+                                    isOrchestratorLoaded = llmInferenceManager.isOrchestratorLoaded,
+                                    activeMainBackend = llmInferenceManager.activeMainBackend,
+                                    activeOrchestratorBackend = llmInferenceManager.activeOrchestratorBackend,
+                                    isLoadingModel = uiState.isLoadingModel,
+                                    loadError = uiState.errorMessage,
+                                    loadStatus = uiState.status,
+                                    fallbackWarning = uiState.fallbackMessage
                                 )
                             }
                             composable("evaluation") {

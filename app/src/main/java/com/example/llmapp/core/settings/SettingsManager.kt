@@ -67,7 +67,7 @@ class SettingsManager(context: Context) {
         set(value) = prefs.edit().putString("default_orchestrator_model_path", value).apply()
 
     var mainHardwareBackend: String
-        get() = prefs.getString("main_hardware_backend", "Auto") ?: "Auto"
+        get() = prefs.getString("main_hardware_backend", "CPU") ?: "CPU"
         set(value) = prefs.edit().putString("main_hardware_backend", value).apply()
 
     var orchestratorHardwareBackend: String

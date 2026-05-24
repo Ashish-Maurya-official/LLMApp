@@ -21,7 +21,7 @@ fun HardwareBackendSection(
     var orchestratorBackend by remember { mutableStateOf(settingsManager.orchestratorHardwareBackend) }
     var isExpanded by remember { mutableStateOf(false) }
     
-    val backendOptions = listOf("Auto", "GPU", "CPU")
+    val backendOptions = listOf("Auto", "GPU", "NPU", "CPU")
 
     Card(
         modifier = Modifier.fillMaxWidth(),

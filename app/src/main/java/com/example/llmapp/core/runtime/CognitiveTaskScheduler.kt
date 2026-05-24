@@ -178,14 +178,16 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                         if (plan.cognitiveDepth >= 2) {
                             if (llmInferenceManager?.isMainModelLoaded == false) {
                                 val defaultPath = settingsManager?.defaultMainModelPath
-                                val currentBackend = settingsManager?.mainHardwareBackend ?: "Auto"
+                                val rawBackend = settingsManager?.mainHardwareBackend ?: "CPU"
+                                // Pre-resolve backend to prevent native GPU crashes during auto-load
+                                val resolvedBackend = com.example.llmapp.core.inference.LlmInferenceManager.resolveBackendPreference(rawBackend)
                                 if (!defaultPath.isNullOrBlank()) {
-                                    emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Auto-loading Main Engine for complex task ($currentBackend backend)...</thought>\n", false, event.generationId))
+                                    emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Auto-loading Main Engine for complex task ($resolvedBackend backend, requested: $rawBackend)...</thought>\n", false, event.generationId))
                                     try {
-                                        llmInferenceManager?.loadMainModel(defaultPath, currentBackend)
-                                    } catch (e: Exception) {
-                                        Log.e("CognitiveTaskScheduler", "Failed to auto-load main model", e)
-                                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("\n<thought>Failed to load Main Engine. Falling back to Orchestrator for response.</thought>\n", false, event.generationId))
+                                        llmInferenceManager?.loadMainModel(defaultPath, resolvedBackend)
+                                    } catch (e: Throwable) {
+                                        Log.e("CognitiveTaskScheduler", "Failed to auto-load main model (backend=$resolvedBackend)", e)
+                                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("\n<thought>Failed to load Main Engine ($resolvedBackend): ${e.message}. Falling back to Orchestrator for response.</thought>\n", false, event.generationId))
                                         val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
                                             rawQuery = event.rawQuery,
                                             toolOutputs = toolResults,

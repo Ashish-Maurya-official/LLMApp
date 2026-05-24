@@ -773,20 +773,38 @@ class ChatViewModel : ViewModel() {
             }
 
             is ChatIntent.LoadModel -> {
-                _uiState.update { it.copy(isLoadingModel = true, errorMessage = null) }
+                _uiState.update { it.copy(isLoadingModel = true, errorMessage = null, fallbackMessage = null) }
                 viewModelScope.launch {
                     try {
                         if (intent.isOrchestrator) {
                             val backendPref = settingsManager?.orchestratorHardwareBackend ?: "CPU"
-                            llmInferenceManager?.loadOrchestratorModel(intent.path, backendPref)
-                            _uiState.update { it.copy(isLoadingModel = false, status = "Orchestrator Loaded") }
+                            Log.d("ChatViewModel", "Loading orchestrator model: ${intent.path} with backend=$backendPref")
+                            val actualBackend = llmInferenceManager?.loadOrchestratorModel(intent.path, backendPref) ?: "Unknown"
+                            Log.d("ChatViewModel", "Orchestrator loaded on $actualBackend (requested: $backendPref)")
+
+                            val fallback = detectFallback(backendPref, actualBackend)
+                            _uiState.update { it.copy(
+                                isLoadingModel = false,
+                                status = "Orchestrator Loaded ($actualBackend)",
+                                fallbackMessage = fallback
+                            ) }
                         } else {
-                            val backendPref = settingsManager?.mainHardwareBackend ?: "Auto"
-                            val backend = llmInferenceManager?.loadMainModel(intent.path, backendPref) ?: "Unknown"
-                            _uiState.update { it.copy(isLoadingModel = false, status = "Model Loaded", activeBackend = backend) }
+                            val backendPref = settingsManager?.mainHardwareBackend ?: "CPU"
+                            Log.d("ChatViewModel", "Loading main model: ${intent.path} with backend=$backendPref")
+                            val actualBackend = llmInferenceManager?.loadMainModel(intent.path, backendPref) ?: "Unknown"
+                            Log.d("ChatViewModel", "Main model loaded on $actualBackend (requested: $backendPref)")
+
+                            val fallback = detectFallback(backendPref, actualBackend)
+                            _uiState.update { it.copy(
+                                isLoadingModel = false,
+                                status = "Model Loaded ($actualBackend)",
+                                activeBackend = actualBackend,
+                                fallbackMessage = fallback
+                            ) }
                         }
                     } catch (e: Throwable) {
-                        _uiState.update { it.copy(isLoadingModel = false, errorMessage = e.message) }
+                        Log.e("ChatViewModel", "Model loading failed", e)
+                        _uiState.update { it.copy(isLoadingModel = false, errorMessage = "Failed to load model: ${e.message}") }
                     }
                 }
             }
@@ -840,6 +858,58 @@ class ChatViewModel : ViewModel() {
                 _uiState.update { it.copy(finalDictatedText = null) }
             }
         }
+    }
+
+    fun clearModelError() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    fun clearFallbackWarning() {
+        _uiState.update { it.copy(fallbackMessage = null) }
+    }
+
+    /**
+     * Detects if a backend fallback occurred by comparing what the user requested
+     * vs what was actually loaded. Returns a user-friendly message or null if no fallback.
+     */
+    private fun detectFallback(requestedBackend: String, actualBackend: String): String? {
+        if (requestedBackend == actualBackend) return null
+
+        // "Auto" is expected to resolve to any backend — but still inform the user what was chosen
+        if (requestedBackend == "Auto") {
+            val resolved = com.example.llmapp.core.inference.LlmInferenceManager.resolveBackendPreference("Auto")
+            return if (actualBackend != resolved) {
+                "Auto mode resolved to $resolved, but it failed to initialize. " +
+                "The model was loaded on $actualBackend instead.\n\n" +
+                "Reason: The $resolved backend encountered a compatibility issue on this device."
+            } else {
+                null // Auto resolved correctly, no fallback
+            }
+        }
+
+        // Explicit backend was requested but a different one was used
+        val reason = when (requestedBackend) {
+            "GPU" -> {
+                if (com.example.llmapp.core.inference.LlmInferenceManager.shouldAvoidGpu()) {
+                    "Your device uses a MediaTek chipset where the GPU delegate is unstable for LLM workloads. " +
+                    "Consider using NPU (NeuroPilot) for better performance on this device."
+                } else if (!com.example.llmapp.core.inference.LlmInferenceManager.isGpuDelegateAvailable()) {
+                    "OpenCL/OpenGL ES 3.1 support was not detected on this device. " +
+                    "The GPU delegate requires these libraries to function."
+                } else {
+                    "The GPU delegate failed to initialize during model loading. " +
+                    "This may be caused by insufficient GPU memory, driver incompatibility, or unsupported model operations."
+                }
+            }
+            "NPU" -> {
+                "The NPU (NeuroPilot) backend failed to initialize. " +
+                "This may be because your device's NPU doesn't support the required operations, " +
+                "or the NeuroPilot driver version is incompatible with this model."
+            }
+            else -> "The $requestedBackend backend was unavailable."
+        }
+
+        return "Requested: $requestedBackend → Loaded on: $actualBackend\n\n$reason"
     }
 
     // ── Send message ──────────────────────────────────────────────────────────

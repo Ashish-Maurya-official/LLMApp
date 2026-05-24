@@ -11,6 +11,7 @@ data class ChatUiState(
     val status: String = "Ready",
     val errorMessage: String? = null,
     val fallbackMessage: String? = null,
+    val fallbackErrorDetails: String? = null,
     val isVoiceModeActive: Boolean = false,
     val voiceState: VoiceState = VoiceState.IDLE,
     val partialTranscript: String = "",

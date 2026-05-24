@@ -1,17 +1,29 @@
 package com.example.llmapp.ui.models
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.llmapp.core.models.ModelDownloader
 import com.example.llmapp.ui.models.composables.ModelCard
 import com.example.llmapp.ui.models.composables.ModelHeader
@@ -41,7 +53,8 @@ fun ModelScreen(
     isLoadingModel: Boolean = false,
     loadError: String? = null,
     loadStatus: String = "Ready",
-    fallbackWarning: String? = null
+    fallbackWarning: String? = null,
+    fallbackErrorDetails: String? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
     var models by remember { mutableStateOf(fallbackModels) }
@@ -159,11 +172,14 @@ fun ModelScreen(
         )
     }
 
-    // ── Fallback Warning Dialog ─────────────────────────────────────────────
+    // ── Fallback Warning Dialog with expandable error details ─────────────
     if (showFallbackDialog && lastFallback != null) {
+        var errorExpanded by remember { mutableStateOf(false) }
+
         AlertDialog(
             onDismissRequest = {
                 showFallbackDialog = false
+                errorExpanded = false
                 onClearFallback()
             },
             icon = {
@@ -180,14 +196,84 @@ fun ModelScreen(
                 )
             },
             text = {
-                Text(
-                    lastFallback ?: "",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Column {
+                    Text(
+                        lastFallback ?: "",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    // Expandable "Show Error" section — like the thinking dropdown
+                    if (!fallbackErrorDetails.isNullOrBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Surface(
+                            onClick = { errorExpanded = !errorExpanded },
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (errorExpanded) "Hide Error Details" else "Show Error Details",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Icon(
+                                        imageVector = if (errorExpanded)
+                                            Icons.Default.KeyboardArrowUp
+                                        else
+                                            Icons.Default.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                AnimatedVisibility(
+                                    visible = errorExpanded,
+                                    enter = expandVertically(),
+                                    exit = shrinkVertically()
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .heightIn(max = 200.dp)
+                                                .verticalScroll(rememberScrollState())
+                                                .horizontalScroll(rememberScrollState())
+                                                .padding(10.dp)
+                                        ) {
+                                            Text(
+                                                text = fallbackErrorDetails,
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 10.sp,
+                                                    lineHeight = 14.sp
+                                                ),
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
                     showFallbackDialog = false
+                    errorExpanded = false
                     onClearFallback()
                 }) {
                     Text("OK")

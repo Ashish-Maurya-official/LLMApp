@@ -773,25 +773,28 @@ class ChatViewModel : ViewModel() {
             }
 
             is ChatIntent.LoadModel -> {
-                _uiState.update { it.copy(isLoadingModel = true, errorMessage = null, fallbackMessage = null) }
+                _uiState.update { it.copy(isLoadingModel = true, errorMessage = null, fallbackMessage = null, fallbackErrorDetails = null) }
                 viewModelScope.launch {
                     try {
                         if (intent.isOrchestrator) {
                             val backendPref = settingsManager?.orchestratorHardwareBackend ?: "CPU"
                             Log.d("ChatViewModel", "Loading orchestrator model: ${intent.path} with backend=$backendPref")
-                            val actualBackend = llmInferenceManager?.loadOrchestratorModel(intent.path, backendPref) ?: "Unknown"
+                            val result = llmInferenceManager?.loadOrchestratorModel(intent.path, backendPref)
+                            val actualBackend = result?.backendName ?: "Unknown"
                             Log.d("ChatViewModel", "Orchestrator loaded on $actualBackend (requested: $backendPref)")
 
                             val fallback = detectFallback(backendPref, actualBackend)
                             _uiState.update { it.copy(
                                 isLoadingModel = false,
                                 status = "Orchestrator Loaded ($actualBackend)",
-                                fallbackMessage = fallback
+                                fallbackMessage = fallback,
+                                fallbackErrorDetails = result?.errorDetails
                             ) }
                         } else {
                             val backendPref = settingsManager?.mainHardwareBackend ?: "CPU"
                             Log.d("ChatViewModel", "Loading main model: ${intent.path} with backend=$backendPref")
-                            val actualBackend = llmInferenceManager?.loadMainModel(intent.path, backendPref) ?: "Unknown"
+                            val result = llmInferenceManager?.loadMainModel(intent.path, backendPref)
+                            val actualBackend = result?.backendName ?: "Unknown"
                             Log.d("ChatViewModel", "Main model loaded on $actualBackend (requested: $backendPref)")
 
                             val fallback = detectFallback(backendPref, actualBackend)
@@ -799,7 +802,8 @@ class ChatViewModel : ViewModel() {
                                 isLoadingModel = false,
                                 status = "Model Loaded ($actualBackend)",
                                 activeBackend = actualBackend,
-                                fallbackMessage = fallback
+                                fallbackMessage = fallback,
+                                fallbackErrorDetails = result?.errorDetails
                             ) }
                         }
                     } catch (e: Throwable) {

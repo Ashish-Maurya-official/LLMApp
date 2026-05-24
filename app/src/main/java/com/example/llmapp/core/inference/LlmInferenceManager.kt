@@ -96,6 +96,28 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
             }
         }
     }
+
+    /** Result of a model load attempt, carrying the actual backend and any fallback error. */
+    data class LoadResult(
+        val backendName: String,
+        val fallbackError: Throwable? = null
+    ) {
+        /** True if a fallback occurred (requested backend != loaded backend). */
+        val didFallback: Boolean get() = fallbackError != null
+
+        /** The full error stacktrace as a string, for the expandable error view. */
+        val errorDetails: String? get() = fallbackError?.let { throwable ->
+            buildString {
+                appendLine(throwable::class.qualifiedName ?: throwable::class.simpleName)
+                appendLine(throwable.message ?: "No message")
+                appendLine()
+                throwable.stackTrace.take(15).forEach { frame ->
+                    appendLine("  at $frame")
+                }
+                if (throwable.stackTrace.size > 15) appendLine("  ... (${throwable.stackTrace.size - 15} more frames)")
+            }
+        }
+    }
     
     // ── Main Reasoning Engine (Level 2) ──────────────────────────────────────
     private var mainEngine: Engine? = null
@@ -127,7 +149,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     private var currentGenerationJob: Job? = null
 
     // ── Main Model Loading ────────────────────────────────────────────────────
-    suspend fun loadMainModel(modelPath: String, hardwareBackend: String = "Auto"): String {
+    suspend fun loadMainModel(modelPath: String, hardwareBackend: String = "Auto"): LoadResult {
         return withContext(Dispatchers.IO) {
             inferenceMutex.withLock {
                 Log.d(TAG, "[LOAD_MAIN] Requested backend: $hardwareBackend")
@@ -150,13 +172,13 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                 val resolvedBackend = resolveBackendPreference(hardwareBackend)
                 Log.d(TAG, "[LOAD_MAIN] Resolved backend: $hardwareBackend → $resolvedBackend")
 
-                val backendName = loadEngineWithFallback(modelPath, resolvedBackend, 8) { eng, conv ->
+                val (backendName, fallbackError) = loadEngineWithFallback(modelPath, resolvedBackend, 8) { eng, conv ->
                     mainEngine = eng
                     mainConversation = conv
                 }
                 activeMainBackend = backendName
                 Log.d(TAG, "[LOAD_MAIN] ✅ Loaded MAIN model successfully with $backendName")
-                backendName
+                LoadResult(backendName, fallbackError)
             }
         }
     }
@@ -176,7 +198,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     }
 
     // ── Orchestrator Model Loading (CPU typically) ───────────────────────────
-    suspend fun loadOrchestratorModel(modelPath: String, hardwareBackend: String = "CPU"): String {
+    suspend fun loadOrchestratorModel(modelPath: String, hardwareBackend: String = "CPU"): LoadResult {
         return withContext(Dispatchers.IO) {
             orchestratorMutex.withLock {
                 Log.d(TAG, "[LOAD_ORCHESTRATOR] Requested backend: $hardwareBackend")
@@ -198,13 +220,13 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                 val resolvedBackend = resolveBackendPreference(hardwareBackend)
                 Log.d(TAG, "[LOAD_ORCHESTRATOR] Resolved backend: $hardwareBackend → $resolvedBackend")
 
-                val backendName = loadEngineWithFallback(modelPath, resolvedBackend, 4) { eng, conv ->
+                val (backendName, fallbackError) = loadEngineWithFallback(modelPath, resolvedBackend, 4) { eng, conv ->
                     orchestratorEngine = eng
                     orchestratorConversation = conv
                 }
                 activeOrchestratorBackend = backendName
                 Log.d(TAG, "[LOAD_ORCHESTRATOR] ✅ Loaded ORCHESTRATOR model successfully with $backendName")
-                backendName
+                LoadResult(backendName, fallbackError)
             }
         }
     }
@@ -228,8 +250,10 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
      *   NPU → CPU  (if NPU was resolved)
      *   GPU → CPU  (if GPU was resolved — rare after pre-flight)
      *   CPU → (no fallback, throw)
+     *
+     * Returns Pair(backendName, fallbackError?) — fallbackError is non-null if a fallback occurred.
      */
-    private fun loadEngineWithFallback(modelPath: String, preferredBackend: String, cpuThreads: Int = 8, onLoaded: (Engine, Conversation) -> Unit): String {
+    private fun loadEngineWithFallback(modelPath: String, preferredBackend: String, cpuThreads: Int = 8, onLoaded: (Engine, Conversation) -> Unit): Pair<String, Throwable?> {
         Log.d(TAG, "[FALLBACK] Starting loadEngineWithFallback: preferred=$preferredBackend, cpuThreads=$cpuThreads")
 
         return when (preferredBackend) {
@@ -237,6 +261,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                 // Pre-flight already passed (resolveBackendPreference only emits "GPU" if safe)
                 try {
                     loadWithBackend(modelPath, Backend.GPU(), "GPU", onLoaded)
+                    "GPU" to null
                 } catch (gpuException: Throwable) {
                     Log.w(TAG, "[FALLBACK] GPU failed, falling back to CPU", gpuException)
                     try {
@@ -244,6 +269,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                         System.gc()
                         Thread.sleep(500)
                         loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
+                        "CPU" to gpuException
                     } catch (cpuException: Throwable) {
                         Log.e(TAG, "[FALLBACK] Both GPU and CPU failed for $modelPath")
                         val combined = RuntimeException(
@@ -258,10 +284,12 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
             "NPU" -> {
                 try {
                     loadWithBackend(modelPath, Backend.NPU(), "NPU", onLoaded)
+                    "NPU" to null
                 } catch (npuException: Throwable) {
                     Log.w(TAG, "[FALLBACK] NPU failed, falling back to CPU", npuException)
                     try {
                         loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
+                        "CPU" to npuException
                     } catch (cpuException: Throwable) {
                         Log.e(TAG, "[FALLBACK] Both NPU and CPU failed for $modelPath")
                         val combined = RuntimeException(
@@ -276,6 +304,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
             else -> {
                 // "CPU" or any unknown → CPU directly, no fallback needed
                 loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
+                "CPU" to null
             }
         }
     }
@@ -403,7 +432,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     
     // Fallback legacy method (points to main engine)
     fun loadModel(modelPath: String, hardwareBackend: String = "Auto"): String = runBlocking {
-        loadMainModel(modelPath, hardwareBackend)
+        loadMainModel(modelPath, hardwareBackend).backendName
     }
     fun generateResponse(prompt: String): String = runBlocking {
         inferenceMutex.withLock {

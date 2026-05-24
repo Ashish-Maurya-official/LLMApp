@@ -783,7 +783,7 @@ class ChatViewModel : ViewModel() {
                             val actualBackend = result?.backendName ?: "Unknown"
                             Log.d("ChatViewModel", "Orchestrator loaded on $actualBackend (requested: $backendPref)")
 
-                            val fallback = detectFallback(backendPref, actualBackend)
+                            val fallback = detectFallback(backendPref, actualBackend, result)
                             _uiState.update { it.copy(
                                 isLoadingModel = false,
                                 status = "Orchestrator Loaded ($actualBackend)",
@@ -797,7 +797,7 @@ class ChatViewModel : ViewModel() {
                             val actualBackend = result?.backendName ?: "Unknown"
                             Log.d("ChatViewModel", "Main model loaded on $actualBackend (requested: $backendPref)")
 
-                            val fallback = detectFallback(backendPref, actualBackend)
+                            val fallback = detectFallback(backendPref, actualBackend, result)
                             _uiState.update { it.copy(
                                 isLoadingModel = false,
                                 status = "Model Loaded ($actualBackend)",
@@ -869,48 +869,64 @@ class ChatViewModel : ViewModel() {
     }
 
     fun clearFallbackWarning() {
-        _uiState.update { it.copy(fallbackMessage = null) }
+        _uiState.update { it.copy(fallbackMessage = null, fallbackErrorDetails = null) }
     }
 
     /**
      * Detects if a backend fallback occurred by comparing what the user requested
      * vs what was actually loaded. Returns a user-friendly message or null if no fallback.
+     * Includes the actual caught error message when available.
      */
-    private fun detectFallback(requestedBackend: String, actualBackend: String): String? {
+    private fun detectFallback(
+        requestedBackend: String,
+        actualBackend: String,
+        loadResult: com.example.llmapp.core.inference.LlmInferenceManager.LoadResult?
+    ): String? {
         if (requestedBackend == actualBackend) return null
+
+        val caughtError = loadResult?.fallbackError
 
         // "Auto" is expected to resolve to any backend — but still inform the user what was chosen
         if (requestedBackend == "Auto") {
             val resolved = com.example.llmapp.core.inference.LlmInferenceManager.resolveBackendPreference("Auto")
             return if (actualBackend != resolved) {
-                "Auto mode resolved to $resolved, but it failed to initialize. " +
-                "The model was loaded on $actualBackend instead.\n\n" +
-                "Reason: The $resolved backend encountered a compatibility issue on this device."
+                buildString {
+                    append("Auto mode resolved to $resolved, but it failed to initialize. ")
+                    append("The model was loaded on $actualBackend instead.")
+                    if (caughtError != null) {
+                        append("\n\nError: ${caughtError.message}")
+                    }
+                }
             } else {
                 null // Auto resolved correctly, no fallback
             }
         }
 
         // Explicit backend was requested but a different one was used
-        val reason = when (requestedBackend) {
-            "GPU" -> {
-                if (com.example.llmapp.core.inference.LlmInferenceManager.shouldAvoidGpu()) {
-                    "Your device uses a MediaTek chipset where the GPU delegate is unstable for LLM workloads. " +
-                    "Consider using NPU (NeuroPilot) for better performance on this device."
-                } else if (!com.example.llmapp.core.inference.LlmInferenceManager.isGpuDelegateAvailable()) {
-                    "OpenCL/OpenGL ES 3.1 support was not detected on this device. " +
-                    "The GPU delegate requires these libraries to function."
-                } else {
-                    "The GPU delegate failed to initialize during model loading. " +
-                    "This may be caused by insufficient GPU memory, driver incompatibility, or unsupported model operations."
+        val reason = buildString {
+            when (requestedBackend) {
+                "GPU" -> {
+                    if (com.example.llmapp.core.inference.LlmInferenceManager.shouldAvoidGpu()) {
+                        append("Your device uses a MediaTek chipset where the GPU delegate is unstable for LLM workloads. ")
+                        append("The GPU backend was blocked before loading (pre-flight check). ")
+                        append("Consider using NPU (NeuroPilot) for better performance on this device.")
+                    } else if (!com.example.llmapp.core.inference.LlmInferenceManager.isGpuDelegateAvailable()) {
+                        append("OpenCL/OpenGL ES 3.1 support was not detected on this device. ")
+                        append("The GPU delegate requires these libraries to function.")
+                    } else {
+                        append("The GPU delegate failed to initialize during model loading.")
+                    }
                 }
+                "NPU" -> {
+                    append("The NPU (NeuroPilot) backend failed to initialize.")
+                }
+                else -> append("The $requestedBackend backend was unavailable.")
             }
-            "NPU" -> {
-                "The NPU (NeuroPilot) backend failed to initialize. " +
-                "This may be because your device's NPU doesn't support the required operations, " +
-                "or the NeuroPilot driver version is incompatible with this model."
+
+            // Append the real error message if we have one
+            if (caughtError != null) {
+                append("\n\nError: ${caughtError.message}")
             }
-            else -> "The $requestedBackend backend was unavailable."
         }
 
         return "Requested: $requestedBackend → Loaded on: $actualBackend\n\n$reason"

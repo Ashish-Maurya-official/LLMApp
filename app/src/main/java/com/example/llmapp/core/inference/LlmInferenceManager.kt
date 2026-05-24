@@ -64,59 +64,41 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         }
 
         /**
-         * Detects if the MediaTek chipset is a flagship Dimensity (9200+).
-         * Flagship chips have mature Mali Immortalis GPUs that handle LiteRT GPU delegate
-         * well enough for the fallback chain to catch any failures safely.
-         */
-        private fun isMediaTekFlagship(): Boolean {
-            val soc = try { Build.SOC_MODEL.lowercase() } catch (_: Throwable) { "" }
-            // Flagship Dimensity: 9200, 9300, 9400, 9500+ series
-            val flagshipPattern = Regex("dimensity\\s*(9[2-9]\\d{2}|[1-9]\\d{4,})")
-            return flagshipPattern.containsMatchIn(soc)
-        }
-
-        /**
-         * Chipset-aware GPU deny-list.
-         * - Flagship Dimensity (9200+): GPU allowed — mature Immortalis GPUs, fallback chain
-         *   will catch any failures safely via exception handling.
-         * - Low/mid-tier MediaTek (Helio, Dimensity 700-8300): GPU blocked — OpenCL drivers
-         *   on these chips can cause native SIGABRT crashes that can't be caught in JVM.
-         * - Non-MediaTek: GPU allowed if OpenCL/OpenGL available.
+         * GPU safety check.
+         * 
+         * Previous versions blanket-blocked all MediaTek devices, but testing confirms
+         * GPU (Backend.GPU / OpenCL) works correctly on MediaTek Dimensity chips
+         * (including MT6897/Dimensity 8300). The loadEngineWithFallback chain handles
+         * any GPU initialization failures safely via exception → CPU fallback.
+         * 
+         * Only return true here if a specific device/ROM combination is known to cause
+         * uncatchable native SIGABRT crashes during Engine.initialize().
          */
         fun shouldAvoidGpu(): Boolean {
-            if (!isMediaTek()) return false
-
-            val soc = try { Build.SOC_MODEL.lowercase() } catch (_: Throwable) { "" }
-
-            if (isMediaTekFlagship()) {
-                Log.d(TAG, "[GPU_CHECK] Flagship MediaTek detected (soc=$soc). GPU allowed with fallback chain.")
-                return false // Allow GPU — fallback chain handles failures
-            }
-
-            Log.w(TAG, "[GPU_CHECK] Non-flagship MediaTek detected (soc=$soc). GPU delegate blocked — risk of native crashes.")
-            return true
+            // Currently no devices are hard-blocked. The fallback chain handles failures.
+            // If a specific device causes native crashes, add it here:
+            // val model = Build.MODEL.lowercase()
+            // if (model.contains("some_known_bad_device")) return true
+            return !isGpuDelegateAvailable()
         }
 
         /**
          * Resolves the effective backend for a given preference.
-         * "Auto" → GPU (if available), CPU as fallback.
+         * "Auto" → GPU (if OpenCL available), CPU as fallback.
          *          NOTE: NPU is NOT auto-selected because standard models from
          *          litert-community lack NeuroPilot-compiled ops (TF_LITE_AUX).
-         * "GPU"  → GPU if safe/available, else CPU.
-         * "NPU"  → NPU directly (user explicitly chose it, let the fallback chain handle failures).
+         * "GPU"  → GPU if OpenCL available, else CPU.
+         * "NPU"  → NPU directly (user explicitly chose it, let fallback chain handle).
          * "CPU"  → CPU directly.
          */
         fun resolveBackendPreference(preferred: String): String {
             return when (preferred) {
                 "Auto" -> {
-                    when {
-                        !shouldAvoidGpu() && isGpuDelegateAvailable() -> "GPU"
-                        else -> "CPU"
-                    }
+                    if (isGpuDelegateAvailable()) "GPU" else "CPU"
                 }
                 "GPU" -> {
-                    if (shouldAvoidGpu() || !isGpuDelegateAvailable()) {
-                        Log.w(TAG, "[RESOLVE] GPU requested but unsafe/unavailable. Falling back to CPU.")
+                    if (!isGpuDelegateAvailable()) {
+                        Log.w(TAG, "[RESOLVE] GPU requested but OpenCL/GL unavailable. Falling back to CPU.")
                         "CPU"
                     } else "GPU"
                 }

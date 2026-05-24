@@ -906,11 +906,7 @@ class ChatViewModel : ViewModel() {
         val reason = buildString {
             when (requestedBackend) {
                 "GPU" -> {
-                    if (com.example.llmapp.core.inference.LlmInferenceManager.shouldAvoidGpu()) {
-                        append("Your device uses a non-flagship MediaTek chipset where the GPU delegate can cause native crashes. ")
-                        append("The GPU backend was blocked before loading (pre-flight check). ")
-                        append("Only flagship Dimensity chips (9200+) are allowed to attempt GPU.")
-                    } else if (!com.example.llmapp.core.inference.LlmInferenceManager.isGpuDelegateAvailable()) {
+                    if (!com.example.llmapp.core.inference.LlmInferenceManager.isGpuDelegateAvailable()) {
                         append("OpenCL/OpenGL ES 3.1 support was not detected on this device. ")
                         append("The GPU delegate requires these libraries to function.")
                     } else {

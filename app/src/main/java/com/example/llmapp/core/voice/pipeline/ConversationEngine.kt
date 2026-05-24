@@ -226,6 +226,16 @@ class ConversationEngine(
         Log.i(TAG, "Transcript: \"$text\"")
         latencyTracker.onRequestSent()
         
+        // Level 0: Deterministic Router (< 20ms)
+        // Intercept stop/pause commands to halt immediately without waking the Orchestrator
+        val lowerText = text.lowercase().trim()
+        if (lowerText == "stop" || lowerText == "pause" || lowerText == "cancel" || lowerText.startsWith("shut up")) {
+            Log.w(TAG, "LEVEL 0 INTERCEPT: Deterministic cancellation triggered.")
+            executeBargeIn()
+            onTranscript("[SYSTEM_INTERCEPT_STOP]")
+            return
+        }
+        
         // Pass to cognitive layer (scaffold)
         cognitiveRouter.route(text)
         

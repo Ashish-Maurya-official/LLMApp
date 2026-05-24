@@ -65,41 +65,56 @@ class MemoryConsolidator(
             return
         }
 
-        // GATE 2: LLM Semantic Extraction
+        // GATE 2: Orchestrator Semantic Extraction
         val extractionPrompt = """
+            <start_of_turn>system
+            You are the Memory Consolidator. Extract factual information or user preferences from the interaction.
+            Output ONLY valid JSON. If there is no salient information, output {"salient": false}.
+            SCHEMA:
+            {
+              "fact": "string",
+              "confidence": float (0.0 to 1.0),
+              "source": "conversation",
+              "salient": true
+            }
+            <end_of_turn>
             <start_of_turn>user
-            Analyze the following interaction. Extract ONLY factual information, user preferences, or core concepts. 
-            If it is just casual chatter or a generic greeting, output EXACTLY the word 'NONE'.
-            Format your extraction as a concise, third-person assertion.
-            
-            Interaction:
             User: $userText
             Assistant: $llmText
             <end_of_turn>
             <start_of_turn>model
-            
+            {
         """.trimIndent()
 
         Log.d("MemoryConsolidator", "Extracting semantic salience in background...")
-        // Using synchronous generateResponse since we are already running on Dispatchers.Default in background
-        val extractionResult = llmInferenceManager.generateResponse(extractionPrompt).trim()
+        // Use the lightweight Orchestrator for this background task
+        val rawResult = llmInferenceManager.generateOrchestratorResponse(extractionPrompt).trim()
+        val extractionResult = if (rawResult.startsWith("{")) rawResult else "{\n$rawResult"
 
-        if (extractionResult.equals("NONE", ignoreCase = true) || extractionResult.isBlank()) {
-            Log.d("MemoryConsolidator", "LLM deemed interaction non-salient. Dropping.")
-            return
+        try {
+            val json = org.json.JSONObject(extractionResult.replace(Regex("```json|```"), "").trim())
+            if (!json.optBoolean("salient", false)) {
+                Log.d("MemoryConsolidator", "LLM deemed interaction non-salient. Dropping.")
+                return
+            }
+            
+            val fact = json.optString("fact", "")
+            if (fact.isBlank()) return
+            
+            Log.d("MemoryConsolidator", "Extracted Salient Memory: $fact")
+
+            // GATE 3: RAG Ingestion
+            val memoryEntity = MemoryEntity(
+                sessionId = "consolidated_${System.currentTimeMillis()}",
+                type = "semantic",
+                content = json.toString(), // Store as JSON string
+                trustZone = 2 // 2 = Agent Inferred
+            )
+
+            cognitiveStateDao.insertMemories(listOf(memoryEntity))
+            Log.d("MemoryConsolidator", "Memory safely committed to RAG.")
+        } catch (e: Exception) {
+            Log.e("MemoryConsolidator", "Failed to parse or save semantic memory JSON: ${e.message}")
         }
-
-        Log.d("MemoryConsolidator", "Extracted Salient Memory: \$extractionResult")
-
-        // GATE 3: RAG Ingestion
-        val memoryEntity = MemoryEntity(
-            sessionId = "consolidated_\${System.currentTimeMillis()}",
-            type = "semantic",
-            content = extractionResult,
-            trustZone = 2 // 2 = Agent Inferred
-        )
-
-        cognitiveStateDao.insertMemories(listOf(memoryEntity))
-        Log.d("MemoryConsolidator", "Memory safely committed to RAG.")
     }
 }

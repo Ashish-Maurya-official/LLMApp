@@ -4,6 +4,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,9 +16,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.PriorityBlockingQueue
-import java.util.UUID
-import androidx.room.withTransaction
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
+import androidx.room.withTransaction
+import java.util.UUID
 
 /**
  * Data class for real-time introspection of the Cognitive Runtime.
@@ -33,12 +36,16 @@ data class IntrospectionData(
  */
 class CognitiveTaskScheduler(private val scope: CoroutineScope) {
 
+    // Dedicated Thread Pool for multi-agent I/O and routing operations to avoid UI/Main contention
+    private val agentDispatcher = Executors.newFixedThreadPool(4) { Thread(it, "Agent-Thread") }.asCoroutineDispatcher()
+
     var chatDatabase: com.example.llmapp.core.database.ChatDatabase? = null
     var cognitiveStateDao: com.example.llmapp.core.database.CognitiveStateDao? = null
     var snapshotDao: com.example.llmapp.core.database.SnapshotDao? = null
     var chatDao: com.example.llmapp.core.database.ChatDao? = null
     var replayTracer: com.example.llmapp.core.telemetry.ReplayTracer? = null
     var equilibriumMonitor: com.example.llmapp.core.telemetry.EquilibriumMonitor? = null
+    var settingsManager: com.example.llmapp.core.settings.SettingsManager? = null
 
     var llmInferenceManager: com.example.llmapp.core.inference.LlmInferenceManager? = null
         set(value) {
@@ -99,7 +106,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
     init {
         telemetry.start()
         tokenAccumulator.start()
-        scope.launch(Dispatchers.Default) {
+        scope.launch(agentDispatcher) {
             _events.collect { event ->
                 processEvent(event)
             }
@@ -124,29 +131,113 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 _state.value = _state.value.copy(activeGenerationId = event.generationId, phase = ExecutionPhase.GENERATING)
                 tokenBuffer.clear()
                 activeJob?.cancel()
-                activeJob = scope.launch(Dispatchers.Default) {
+                val cancellationToken = com.example.llmapp.core.orchestrator.CancellationToken()
+
+                // Execute the agent and routing logic on the dedicated thread pool
+                activeJob = scope.launch(agentDispatcher) {
                     telemetry.onConversationReset()
                     telemetry.onGenerationRequested()
                     
-                    val routingPath = com.example.llmapp.core.inference.CognitiveLoadBalancer.determineRoutingPath(event.rawQuery, 0)
-                    
-                    if (routingPath == com.example.llmapp.core.inference.RoutingPath.STRATEGIC) {
-                        Log.d("CognitiveTaskScheduler", "Executing Deep Strategic Path")
-                        
+                    try {
+                        // LEVEL 1: Orchestrator LLM
                         _state.value = _state.value.copy(phase = ExecutionPhase.PLANNING)
-                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Executing Multi-Agent Strategic Graph...\n[Node 1: Planner] Generating execution strategy...\n</thought>", false, event.generationId))
-                        val plannerPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildPlannerPrompt(event.prompt)
-                        val plan = llmInferenceManager?.generateResponse(plannerPrompt) ?: ""
+                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Level 1: Orchestrator Active...</thought>\n", false, event.generationId))
                         
-                        // Skipped Node 2: Verifier to accelerate response time by 33%
+                        val orchestratorPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorPrompt(event.rawQuery)
+                        val orchestratorJson = llmInferenceManager?.generateOrchestratorResponse(orchestratorPrompt) ?: "{}"
                         
-                        _state.value = _state.value.copy(phase = ExecutionPhase.SYNTHESIZING)
-                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>\n[Node 2: Synthesizer] Executing strategy and generating final response...\n</thought>\n\n", false, event.generationId))
-                        val synthesizerPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildSynthesizerPrompt(event.prompt, "Retrieved context included in main prompt", plan)
-                        llmInferenceManager?.generateResponseAsync(synthesizerPrompt, event.generationId)
+                        if (cancellationToken.isCancelled) return@launch
                         
-                    } else {
-                        llmInferenceManager?.generateResponseAsync(event.prompt, event.generationId)
+                        val plan = com.example.llmapp.core.inference.ExecutionGraph.parseCognitivePlan(orchestratorJson, event.rawQuery)
+                        
+                        // PARALLEL TOOL EXECUTION (Execution Graph)
+                        val toolResults = mutableMapOf<String, String>()
+                        if (plan.tools.isNotEmpty() && plan.tools[0].name != "NONE") {
+                            _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
+                            emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Executing tools in parallel: ${plan.tools.joinToString { it.name }}</thought>\n", false, event.generationId))
+                            
+                            val deferredResults = plan.tools.map { tool ->
+                                async {
+                                    if (tool.name == "WEB_SEARCH") {
+                                        val skill = com.example.llmapp.core.skills.WebSearchSkill()
+                                        skill.search(plan.rewrittenQuery).second
+                                    } else {
+                                        "Tool ${tool.name} executed."
+                                    }
+                                }
+                            }
+                            
+                            deferredResults.forEachIndexed { index, deferred ->
+                                toolResults[plan.tools[index].name] = deferred.await()
+                            }
+                        }
+                        
+                        if (cancellationToken.isCancelled) return@launch
+                        
+                        // LEVEL 2: Main Reasoning LLM Context Composer
+                        if (plan.cognitiveDepth >= 2) {
+                            if (llmInferenceManager?.isMainModelLoaded == false) {
+                                val defaultPath = settingsManager?.defaultMainModelPath
+                                val currentBackend = settingsManager?.mainHardwareBackend ?: "Auto"
+                                if (!defaultPath.isNullOrBlank()) {
+                                    emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Auto-loading Main Engine for complex task ($currentBackend backend)...</thought>\n", false, event.generationId))
+                                    try {
+                                        llmInferenceManager?.loadMainModel(defaultPath, currentBackend)
+                                    } catch (e: Exception) {
+                                        Log.e("CognitiveTaskScheduler", "Failed to auto-load main model", e)
+                                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("\n<thought>Failed to load Main Engine. Falling back to Orchestrator for response.</thought>\n", false, event.generationId))
+                                        val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
+                                            rawQuery = event.rawQuery,
+                                            toolOutputs = toolResults,
+                                            memoryContext = ""
+                                        )
+                                        llmInferenceManager?.generateOrchestratorResponseAsync(finalPrompt, event.generationId)
+                                        return@launch
+                                    }
+                                } else {
+                                    emit(CognitiveEvent.RuntimeEvent.TokenEmitted("\n<thought>Main Engine not configured. Falling back to Orchestrator for response.</thought>\n", false, event.generationId))
+                                    val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
+                                        rawQuery = event.rawQuery,
+                                        toolOutputs = toolResults,
+                                        memoryContext = ""
+                                    )
+                                    llmInferenceManager?.generateOrchestratorResponseAsync(finalPrompt, event.generationId)
+                                    return@launch
+                                }
+                            }
+
+                            _state.value = _state.value.copy(phase = ExecutionPhase.SYNTHESIZING)
+                            val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildContextComposerPrompt(
+                                originalPrompt = event.prompt,
+                                rewrittenQuery = plan.rewrittenQuery,
+                                toolOutputs = toolResults,
+                                memoryContext = "" // Can wire memory consolidator here in the future
+                            )
+                            llmInferenceManager?.generateMainResponseAsync(finalPrompt, event.generationId)
+                        } else {
+                            // LEVEL 1: Orchestrator answers simple queries directly
+                            _state.value = _state.value.copy(phase = ExecutionPhase.SYNTHESIZING)
+                            
+                            val thoughtMessage = if (toolResults.isNotEmpty()) {
+                                "\n<thought>Background tasks completed. Orchestrator generating natural response...</thought>\n"
+                            } else {
+                                "\n<thought>Query is basic. Orchestrator generating response directly...</thought>\n"
+                            }
+                            emit(CognitiveEvent.RuntimeEvent.TokenEmitted(thoughtMessage, false, event.generationId))
+                            
+                            val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
+                                rawQuery = event.rawQuery,
+                                toolOutputs = toolResults,
+                                memoryContext = ""
+                            )
+                            llmInferenceManager?.generateOrchestratorResponseAsync(finalPrompt, event.generationId)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("CognitiveTaskScheduler", "Pipeline error. Falling back to L1 Orchestrator engine.", e)
+                        llmInferenceManager?.generateOrchestratorResponseAsync(
+                            com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(event.rawQuery, emptyMap(), ""),
+                            event.generationId
+                        )
                     }
                 }
             }
@@ -167,7 +258,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
             is CognitiveEvent.SystemEvent.ThermalStatusChanged -> {
                 Log.w("CognitiveTaskScheduler", "Thermal State Changed to: ${event.state}")
                 if (event.state == CognitiveEvent.ThermalState.CRITICAL) {
-                    llmInferenceManager?.unloadModel()
+                    llmInferenceManager?.unloadMainModel()
                 }
             }
 

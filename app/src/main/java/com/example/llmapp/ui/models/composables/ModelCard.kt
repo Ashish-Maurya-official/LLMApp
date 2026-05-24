@@ -25,7 +25,9 @@ fun ModelCard(
     progress: Float?,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
-    onLoad: () -> Unit
+    onLoad: () -> Unit,
+    isLoaded: Boolean = false,
+    activeBackend: String? = null
 ) {
     val isDownloading = progress != null && progress < 1.0f
     val animatedProgress by animateFloatAsState(
@@ -122,10 +124,18 @@ fun ModelCard(
                         IconButton(onClick = onDelete) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete Model", tint = MaterialTheme.colorScheme.error)
                         }
-                        Button(onClick = onLoad) {
-                            Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Load Model")
+                        if (isLoaded) {
+                            Button(onClick = onLoad, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)) {
+                                Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (activeBackend != null) "Unload ($activeBackend)" else "Unload Model")
+                            }
+                        } else {
+                            Button(onClick = onLoad) {
+                                Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Load Model")
+                            }
                         }
                     } else {
                         OutlinedButton(onClick = onDownload) {

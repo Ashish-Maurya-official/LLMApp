@@ -159,6 +159,7 @@ class ChatViewModel : ViewModel() {
             cognitiveTaskScheduler.chatDao = hMgr.chatDao()
             cognitiveTaskScheduler.replayTracer = com.example.llmapp.core.telemetry.ReplayTracer(hMgr.context)
             cognitiveTaskScheduler.equilibriumMonitor = com.example.llmapp.core.telemetry.EquilibriumMonitor()
+            cognitiveTaskScheduler.settingsManager = settingsManager
             
             // Initialize the unified ConversationEngine (replaces both VoiceInteractionManager and VoiceManager)
             conversationEngine = com.example.llmapp.core.voice.pipeline.ConversationEngine(
@@ -168,8 +169,13 @@ class ChatViewModel : ViewModel() {
                     processIntent(ChatIntent.SetPartialTranscript(partialText))
                 },
                 onTranscript = { text ->
-                    _uiState.update { it.copy(partialTranscript = "", voiceState = VoiceState.THINKING) }
-                    handleSendMessage(text)
+                    if (text == "[SYSTEM_INTERCEPT_STOP]") {
+                        _uiState.update { it.copy(partialTranscript = "", voiceState = VoiceState.LISTENING) }
+                        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.StopGeneration("SYSTEM_STOP"))
+                    } else {
+                        _uiState.update { it.copy(partialTranscript = "", voiceState = VoiceState.THINKING) }
+                        handleSendMessage(text)
+                    }
                 },
                 onStateChanged = { pipelineState ->
                     val voiceState = when (pipelineState) {
@@ -770,10 +776,33 @@ class ChatViewModel : ViewModel() {
                 _uiState.update { it.copy(isLoadingModel = true, errorMessage = null) }
                 viewModelScope.launch {
                     try {
-                        llmInferenceManager?.loadModel(intent.path)
-                        _uiState.update { it.copy(isLoadingModel = false, status = "Model Loaded") }
+                        if (intent.isOrchestrator) {
+                            val backendPref = settingsManager?.orchestratorHardwareBackend ?: "CPU"
+                            llmInferenceManager?.loadOrchestratorModel(intent.path, backendPref)
+                            _uiState.update { it.copy(isLoadingModel = false, status = "Orchestrator Loaded") }
+                        } else {
+                            val backendPref = settingsManager?.mainHardwareBackend ?: "Auto"
+                            val backend = llmInferenceManager?.loadMainModel(intent.path, backendPref) ?: "Unknown"
+                            _uiState.update { it.copy(isLoadingModel = false, status = "Model Loaded", activeBackend = backend) }
+                        }
                     } catch (e: Throwable) {
                         _uiState.update { it.copy(isLoadingModel = false, errorMessage = e.message) }
+                    }
+                }
+            }
+
+            is ChatIntent.UnloadModel -> {
+                viewModelScope.launch {
+                    try {
+                        if (intent.isOrchestrator) {
+                            llmInferenceManager?.unloadOrchestratorModel()
+                            _uiState.update { it.copy(status = "Orchestrator Unloaded") }
+                        } else {
+                            llmInferenceManager?.unloadMainModel()
+                            _uiState.update { it.copy(status = "Model Unloaded", activeBackend = null) }
+                        }
+                    } catch (e: Throwable) {
+                        Log.e("ChatViewModel", "Error unloading model: ${e.message}")
                     }
                 }
             }

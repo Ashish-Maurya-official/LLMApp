@@ -28,7 +28,7 @@ fun ChatTopBar(
 ) {
     val focusManager = LocalFocusManager.current
     var backendExpanded by remember { mutableStateOf(false) }
-    val currentBackend = uiState.activeBackend ?: settingsManager?.hardwareBackend ?: "Auto"
+    val currentBackend = uiState.activeBackend ?: settingsManager?.mainHardwareBackend ?: "Auto"
 
     TopAppBar(
         title = { Text("Chat") },
@@ -80,12 +80,12 @@ fun ChatTopBar(
                         DropdownMenuItem(
                             text = { Text(backend) },
                             onClick = {
-                                settingsManager?.hardwareBackend = backend
+                                settingsManager?.mainHardwareBackend = backend
                                 backendExpanded = false
                                 // Trigger a reload of the model with the new backend
-                                val currentModel = settingsManager?.currentModelPath
+                                val currentModel = settingsManager?.defaultMainModelPath
                                 if (!currentModel.isNullOrEmpty()) {
-                                    onIntent(ChatIntent.LoadModel(currentModel))
+                                    onIntent(ChatIntent.LoadModel(currentModel, false))
                                 }
                             }
                         )

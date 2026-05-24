@@ -16,6 +16,14 @@ data class AvailableModel(
 
 val fallbackModels = listOf(
     AvailableModel(
+        "Qwen 2.5 0.5B (Orchestrator)",
+        "Ultra-fast lightweight model optimized for cognitive routing, json structured output, and intent classification.",
+        "0.6 GB",
+        "https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct/resolve/main/Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task?download=true",
+        "qwen-2.5-0.5b-instruct.task",
+        listOf("LiteRT", "Orchestrator", "Qwen")
+    ),
+    AvailableModel(
         "Gemma 4 E2B (IT)",
         "The absolute latest generation (April 2026). Optimized for LiteRT-LM with top reasoning.",
         "2.6 GB",

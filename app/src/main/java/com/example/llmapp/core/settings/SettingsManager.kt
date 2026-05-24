@@ -58,11 +58,19 @@ class SettingsManager(context: Context) {
         get() = prefs.getString("user_bio", "") ?: ""
         set(value) = prefs.edit().putString("user_bio", value).apply()
 
-    var currentModelPath: String
-        get() = prefs.getString("current_model_path", "") ?: ""
-        set(value) = prefs.edit().putString("current_model_path", value).apply()
+    var defaultMainModelPath: String
+        get() = prefs.getString("default_main_model_path", "") ?: ""
+        set(value) = prefs.edit().putString("default_main_model_path", value).apply()
 
-    var hardwareBackend: String
-        get() = prefs.getString("hardware_backend", "Auto") ?: "Auto"
-        set(value) = prefs.edit().putString("hardware_backend", value).apply()
+    var defaultOrchestratorModelPath: String
+        get() = prefs.getString("default_orchestrator_model_path", "") ?: ""
+        set(value) = prefs.edit().putString("default_orchestrator_model_path", value).apply()
+
+    var mainHardwareBackend: String
+        get() = prefs.getString("main_hardware_backend", "Auto") ?: "Auto"
+        set(value) = prefs.edit().putString("main_hardware_backend", value).apply()
+
+    var orchestratorHardwareBackend: String
+        get() = prefs.getString("orchestrator_hardware_backend", "CPU") ?: "CPU"
+        set(value) = prefs.edit().putString("orchestrator_hardware_backend", value).apply()
 }

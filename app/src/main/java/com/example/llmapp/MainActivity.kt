@@ -66,9 +66,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        llmInferenceManager = LlmInferenceManager(this)
-        modelDownloader = ModelDownloader(this)
         settingsManager = SettingsManager(this)
+        llmInferenceManager = LlmInferenceManager(this, settingsManager)
+        modelDownloader = ModelDownloader(this)
         historyManager = ChatHistoryManager(this)
         
         viewModel.llmInferenceManager = llmInferenceManager
@@ -99,6 +99,11 @@ class MainActivity : ComponentActivity() {
 
         // Schedule the Cognitive Sleep Cycle (WorkManager)
         com.example.llmapp.core.sleep.SleepCycleScheduler.scheduleSleepCycle(this)
+
+        // Auto-load Orchestrator model only. Main model loads dynamically on demand.
+        if (settingsManager.defaultOrchestratorModelPath.isNotBlank()) {
+            viewModel.processIntent(ChatIntent.LoadModel(settingsManager.defaultOrchestratorModelPath, true))
+        }
 
         setContent {
             val themePref by viewModel.themePreference.collectAsState()
@@ -219,7 +224,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     NavHost(
                         navController = navController,
-                        startDestination = "models"
+                        startDestination = "chat"
                     ) {
                         composable("chat") {
                             val uiState by viewModel.uiState.collectAsState()
@@ -240,16 +245,24 @@ class MainActivity : ComponentActivity() {
                             composable("models") {
                                 com.example.llmapp.ui.models.ModelScreen(
                                     modelDownloader = modelDownloader,
-                                    onModelSelected = { path ->
-                                        initModel(path)
+                                    onModelSelected = { path, isOrch ->
+                                        viewModel.processIntent(ChatIntent.LoadModel(path, isOrch))
                                         navController.navigate("chat") {
                                             popUpTo(navController.graph.startDestinationId) { saveState = true }
                                             launchSingleTop = true
                                             restoreState = true
                                         }
                                     },
+                                    onModelUnloaded = { path, isOrch ->
+                                        viewModel.processIntent(ChatIntent.UnloadModel(path, isOrch))
+                                    },
                                     openDrawer = { scope.launch { drawerState.open() } },
-                                    onOpenEvaluation = { navController.navigate("evaluation") }
+                                    onOpenEvaluation = { navController.navigate("evaluation") },
+                                    settingsManager = settingsManager,
+                                    isMainModelLoaded = llmInferenceManager?.isMainModelLoaded == true,
+                                    isOrchestratorLoaded = llmInferenceManager?.isOrchestratorLoaded == true,
+                                    activeMainBackend = llmInferenceManager?.activeMainBackend,
+                                    activeOrchestratorBackend = llmInferenceManager?.activeOrchestratorBackend
                                 )
                             }
                             composable("evaluation") {
@@ -297,25 +310,7 @@ class MainActivity : ComponentActivity() {
                 }
         }
     }
-    private fun initModel(path: String) {
-        viewModel.processIntent(ChatIntent.LoadModel(path))
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val loadedBackend = llmInferenceManager.loadModel(
-                    modelPath = path,
-                    hardwareBackend = settingsManager.hardwareBackend,
-                    maxTokens = settingsManager.maxTokens,
-                    temperature = settingsManager.temperature,
-                    topK = settingsManager.topK
-                )
-                withContext(Dispatchers.Main) {
-                    viewModel.processIntent(ChatIntent.ModelLoaded(loadedBackend))
-                }
-            } catch (e: Throwable) {
-                withContext(Dispatchers.Main) {
-                    viewModel.processIntent(ChatIntent.SetError("Failed to load model: ${e.message}"))
-                }
-            }
-        }
+    private fun initModel(path: String, isOrchestrator: Boolean) {
+        viewModel.processIntent(ChatIntent.LoadModel(path, isOrchestrator))
     }
 }

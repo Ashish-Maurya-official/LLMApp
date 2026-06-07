@@ -99,7 +99,7 @@ class GpuCapabilityProbe(context: Context) {
             return false
         }
 
-        // 4. Check OpenCL availability
+        // 4. Check OpenCL availability — LiteRT-LM's GPU delegate requires OpenCL.
         if (!isOpenClAvailable()) {
             Log.w(TAG, "GPU blocked: OpenCL library not available on this device")
             return false

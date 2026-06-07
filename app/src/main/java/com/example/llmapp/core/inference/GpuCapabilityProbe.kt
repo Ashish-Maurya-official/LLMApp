@@ -138,10 +138,9 @@ class GpuCapabilityProbe(context: Context) {
             return false
         }
 
-        // 2. Check if this is a Qualcomm device (NPU only works on Snapdragon 8 Gen 2+)
+        // 2. Log SoC info for NPU (non-Qualcomm SoCs are tried but warned, as crash detector will catch failures)
         if (!isQualcommDevice()) {
-            Log.w(TAG, "NPU blocked: non-Qualcomm SoC detected (${Build.HARDWARE}, ${Build.SOC_MODEL})")
-            return false
+            Log.w(TAG, "NPU warning: non-Qualcomm SoC detected (${Build.HARDWARE}, ${Build.SOC_MODEL}). Attempting execution anyway...")
         }
 
         // 3. Check memory

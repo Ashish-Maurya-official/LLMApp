@@ -275,21 +275,39 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                 // FIX(BUG 1 & 3): Pre-flight NPU capability check
                 if (!gpuProbe.isNpuSafe()) {
                     val probeError = RuntimeException(
-                        "NPU probe BLOCKED initialization. This device does not support NPU inference.\n" +
-                        "NPU requires Qualcomm Snapdragon 8 Gen 2+ with QAIRT runtime.\n" +
+                        "NPU probe BLOCKED initialization. NPU safety checks failed (due to previous crashes or low memory).\n" +
                         "Diagnostics: ${gpuProbe.getDiagnostics()}"
                     )
-                    Log.w(TAG, "[FALLBACK] NPU BLOCKED by probe — going straight to CPU", probeError)
+                    Log.w(TAG, "[FALLBACK] NPU BLOCKED by probe — trying GPU next", probeError)
+                    // NPU blocked → try GPU → CPU
                     try {
-                        loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
-                        "CPU" to probeError
-                    } catch (cpuException: Throwable) {
-                        val combined = RuntimeException(
-                            "NPU blocked by safety probe, CPU also failed: ${cpuException.message}"
-                        )
-                        combined.addSuppressed(probeError)
-                        combined.addSuppressed(cpuException)
-                        throw combined
+                        if (gpuProbe.isGpuSafe()) {
+                            gpuProbe.markGpuInitStarted()
+                            loadWithBackend(modelPath, Backend.GPU(), "GPU", onLoaded)
+                            gpuProbe.markGpuInitSucceeded()
+                            "GPU" to probeError
+                        } else {
+                            Log.w(TAG, "[FALLBACK] GPU also blocked by probe — falling back to CPU")
+                            loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
+                            "CPU" to probeError
+                        }
+                    } catch (gpuException: Throwable) {
+                        gpuProbe.markGpuInitSucceeded() // Clear pending — not a SIGSEGV
+                        Log.w(TAG, "[FALLBACK] GPU also failed after NPU probe block, trying CPU", gpuException)
+                        try {
+                            System.gc()
+                            Thread.sleep(500)
+                            loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
+                            "CPU" to probeError
+                        } catch (cpuException: Throwable) {
+                            val combined = RuntimeException(
+                                "All backends failed. NPU: blocked by probe, GPU: ${gpuException.message}, CPU: ${cpuException.message}"
+                            )
+                            combined.addSuppressed(probeError)
+                            combined.addSuppressed(gpuException)
+                            combined.addSuppressed(cpuException)
+                            throw combined
+                        }
                     }
                 } else {
                     try {
@@ -299,18 +317,40 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                         "NPU" to null
                     } catch (npuException: Throwable) {
                         gpuProbe.markNpuInitSucceeded() // Clear pending — not a SIGSEGV
-                        Log.w(TAG, "[FALLBACK] NPU failed (Java exception: ${npuException::class.simpleName}), falling back to CPU", npuException)
+                        Log.w(TAG, "[FALLBACK] NPU failed (Java exception: ${npuException::class.simpleName}), falling back to GPU", npuException)
+                        // GC + delay to release NPU native resources before GPU attempt
+                        System.gc()
+                        Thread.sleep(500)
+                        // NPU failed → try GPU → CPU
                         try {
-                            loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
-                            "CPU" to npuException
-                        } catch (cpuException: Throwable) {
-                            Log.e(TAG, "[FALLBACK] Both NPU and CPU failed for $modelPath")
-                            val combined = RuntimeException(
-                                "All backends failed. NPU: ${npuException.message}, CPU: ${cpuException.message}"
-                            )
-                            combined.addSuppressed(npuException)
-                            combined.addSuppressed(cpuException)
-                            throw combined
+                            if (gpuProbe.isGpuSafe()) {
+                                gpuProbe.markGpuInitStarted()
+                                loadWithBackend(modelPath, Backend.GPU(), "GPU", onLoaded)
+                                gpuProbe.markGpuInitSucceeded()
+                                "GPU" to npuException
+                            } else {
+                                Log.w(TAG, "[FALLBACK] GPU blocked by probe after NPU failure — falling back to CPU")
+                                loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
+                                "CPU" to npuException
+                            }
+                        } catch (gpuException: Throwable) {
+                            gpuProbe.markGpuInitSucceeded() // Clear pending — not a SIGSEGV
+                            Log.w(TAG, "[FALLBACK] GPU also failed after NPU failure, trying CPU", gpuException)
+                            try {
+                                System.gc()
+                                Thread.sleep(500)
+                                loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
+                                "CPU" to npuException
+                            } catch (cpuException: Throwable) {
+                                Log.e(TAG, "[FALLBACK] All backends (NPU, GPU, CPU) failed for $modelPath")
+                                val combined = RuntimeException(
+                                    "All backends failed. NPU: ${npuException.message}, GPU: ${gpuException.message}, CPU: ${cpuException.message}"
+                                )
+                                combined.addSuppressed(npuException)
+                                combined.addSuppressed(gpuException)
+                                combined.addSuppressed(cpuException)
+                                throw combined
+                            }
                         }
                     }
                 }
@@ -332,12 +372,22 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         )
         Log.d(TAG, "[LOAD_BACKEND] Creating Engine instance ($backendName)...")
         val newEngine = Engine(config)
-        Log.d(TAG, "[LOAD_BACKEND] Calling Engine.initialize() ($backendName)... this is where native crashes can occur")
-        newEngine.initialize()
-        Log.d(TAG, "[LOAD_BACKEND] Engine initialized! Creating Conversation ($backendName)...")
-        onLoaded(newEngine, newEngine.createConversation())
-        Log.d(TAG, "[LOAD_BACKEND] ✅ Successfully loaded with $backendName")
-        return backendName
+        try {
+            Log.d(TAG, "[LOAD_BACKEND] Calling Engine.initialize() ($backendName)... this is where native crashes can occur")
+            newEngine.initialize()
+            Log.d(TAG, "[LOAD_BACKEND] Engine initialized! Creating Conversation ($backendName)...")
+            onLoaded(newEngine, newEngine.createConversation())
+            Log.d(TAG, "[LOAD_BACKEND] ✅ Successfully loaded with $backendName")
+            return backendName
+        } catch (e: Throwable) {
+            // Close the engine to release native resources before re-throwing.
+            // Without this, the leaked native Engine causes SIGSEGV on the next backend attempt.
+            Log.w(TAG, "[LOAD_BACKEND] ❌ $backendName failed, closing engine to release native resources")
+            try { newEngine.close() } catch (closeErr: Throwable) {
+                Log.w(TAG, "[LOAD_BACKEND] Error closing failed $backendName engine (non-fatal): ${closeErr.message}")
+            }
+            throw e
+        }
     }
 
     // ── Safe resource cleanup helpers ────────────────────────────────────────

@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var historyManager: ChatHistoryManager
     private lateinit var searchPreferences: com.example.llmapp.core.search.settings.SearchPreferences
     private lateinit var secureSearchStorage: com.example.llmapp.core.search.settings.SecureSearchStorage
+    private lateinit var profileViewModel: com.example.llmapp.ui.profile.ProfileViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +86,13 @@ class MainActivity : ComponentActivity() {
         viewModel.cognitiveTaskScheduler.workers = listOf(
             com.example.llmapp.core.search.WebSearchAgent(orchestrator)
         )
+        viewModel.cognitiveTaskScheduler.memoryExtractor = com.example.llmapp.core.memory.MemoryExtractor(
+            historyManager.database.memoryDao(),
+            llmInferenceManager,
+            settingsManager
+        )
+        
+        profileViewModel = com.example.llmapp.ui.profile.ProfileViewModel(historyManager.database.memoryDao())
 
         val chaosTestRunner = com.example.llmapp.core.runtime.ChaosTestRunner(viewModel.cognitiveTaskScheduler)
         val filter = IntentFilter("com.example.llmapp.CHAOS_TEST")
@@ -323,6 +331,7 @@ class MainActivity : ComponentActivity() {
                             composable("profile") {
                                 com.example.llmapp.ui.profile.ProfileScreen(
                                     settingsManager = settingsManager,
+                                    profileViewModel = profileViewModel,
                                     openDrawer = { scope.launch { drawerState.open() } }
                                 )
                             }

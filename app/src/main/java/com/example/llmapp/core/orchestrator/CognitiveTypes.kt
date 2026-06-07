@@ -27,6 +27,7 @@ data class CognitivePlan(
     val cognitiveDepth: Int,
     val tools: List<ToolRequest>,
     val memoryPlan: MemoryPlan,
+    val memoryExtraction: MemoryExtractionPlan,
     val rewrittenQuery: String
 )
 
@@ -37,6 +38,19 @@ data class ToolRequest(
     val query: String? = null,
     val parameters: Map<String, String>? = null
 )
+
+/**
+ * Directs the background MemoryExtractor on whether to save new facts.
+ */
+data class MemoryExtractionPlan(
+    val enabled: Boolean,
+    val confidence: Float,
+    val reason: String
+) {
+    companion object {
+        val DISABLED = MemoryExtractionPlan(enabled = false, confidence = 0f, reason = "none")
+    }
+}
 
 // ── Orchestrator defines WHAT, not HOW ───────────────────────────────────
 /**

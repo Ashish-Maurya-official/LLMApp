@@ -23,6 +23,9 @@ object ExecutionGraph {
             4. If the user asks for coding, complex reasoning, or web search, cognitiveDepth MUST be 2. Otherwise, set it to 1.
             5. Set memoryPlan.enabled=true when the user references personal info, past conversations, preferences, or previously discussed facts. Categories: PROFILE (name, DOB, location, preferences), SEMANTIC (learned facts), EPISODIC (past conversation topics). Set goal to describe WHAT to find. Set importance 0-1 (1.0=critical to answer, 0.3=nice to have). Do NOT generate search keywords.
             6. memoryPlan and tools are independent. Both can be active simultaneously.
+            7. memoryExtraction: Evaluate if the user states NEW facts. 
+               DO NOT extract: Temporary emotions ("I am tired"), Temporary physical states, Short-term intentions ("I might learn Rust"), One-off events, Speculation, Questions ("Should I buy a MacBook?").
+               ONLY extract: Identity ("My name is Ashish"), Occupation ("I work at YMGrad"), Long-term preferences ("I primarily use Flutter"), Skills, Projects, Persistent habits, Explicit remember/save requests ("Remember that I use Vim").
 
             SCHEMA:
             {
@@ -34,6 +37,11 @@ object ExecutionGraph {
                 "goal": "",
                 "categories": [],
                 "importance": 0.0
+              },
+              "memoryExtraction": {
+                "enabled": false,
+                "confidence": 0.0,
+                "reason": "short explanation"
               },
               "tools": [
                 {
@@ -178,13 +186,50 @@ object ExecutionGraph {
                 categories = memCategories,
                 importance = memPlanObj?.optDouble("importance", 0.0)?.toFloat() ?: 0f
             )
+
+            // Parse memoryExtraction — HYBRID GATE
+            // The 0.5B model often echoes schema defaults (enabled=false, reason="short explanation")
+            // without actually reasoning. We can trust an explicit YES, but must verify a NO.
+            val extractionObj = obj.optJSONObject("memoryExtraction")
+            val memoryExtraction: com.example.llmapp.core.orchestrator.MemoryExtractionPlan
+            if (extractionObj != null) {
+                val modelEnabled = extractionObj.optBoolean("enabled", false)
+                val modelConfidence = extractionObj.optDouble("confidence", 0.0).toFloat()
+                val modelReason = extractionObj.optString("reason", "none")
+                
+                if (modelEnabled && modelConfidence > 0.0f) {
+                    // Orchestrator explicitly says YES with real confidence → trust it
+                    Log.d("ExecutionGraph", "Orchestrator says EXTRACT: conf=$modelConfidence, reason=$modelReason")
+                    memoryExtraction = com.example.llmapp.core.orchestrator.MemoryExtractionPlan(
+                        enabled = true,
+                        confidence = modelConfidence,
+                        reason = modelReason
+                    )
+                } else {
+                    // Orchestrator says NO — but 0.5B models are unreliable rejectors.
+                    // Cross-check with heuristic to catch false negatives.
+                    val heuristic = inferMemoryExtractionFromQuery(originalQuery)
+                    if (heuristic.enabled) {
+                        Log.d("ExecutionGraph", "Orchestrator said NO (reason=$modelReason) but heuristic detected personal facts. Overriding.")
+                        memoryExtraction = heuristic
+                    } else {
+                        Log.d("ExecutionGraph", "Both orchestrator and heuristic agree: no extraction needed.")
+                        memoryExtraction = com.example.llmapp.core.orchestrator.MemoryExtractionPlan.DISABLED
+                    }
+                }
+            } else {
+                // Field missing entirely → heuristic only
+                Log.d("ExecutionGraph", "Orchestrator omitted memoryExtraction. Applying heuristic fallback.")
+                memoryExtraction = inferMemoryExtractionFromQuery(originalQuery)
+            }
             
             return com.example.llmapp.core.orchestrator.CognitivePlan(
                 intent = obj.optString("intent", "chat"),
                 confidence = obj.optDouble("confidence", 1.0).toFloat(),
-                cognitiveDepth = obj.optInt("cognitiveDepth", 2),
+                cognitiveDepth = obj.optInt("cognitiveDepth", 1),
                 tools = toolRequests,
                 memoryPlan = memoryPlan,
+                memoryExtraction = memoryExtraction,
                 rewrittenQuery = obj.optString("rewrittenQuery", originalQuery)
             )
 
@@ -196,8 +241,48 @@ object ExecutionGraph {
                 cognitiveDepth = 2,
                 tools = listOf(com.example.llmapp.core.orchestrator.ToolRequest("NONE", 1, false)),
                 memoryPlan = com.example.llmapp.core.orchestrator.MemoryPlan.DISABLED,
+                memoryExtraction = com.example.llmapp.core.orchestrator.MemoryExtractionPlan.DISABLED,
                 rewrittenQuery = originalQuery
             )
         }
+    }
+
+    /**
+     * Lightweight heuristic fallback for when the 0.5B orchestrator omits the
+     * memoryExtraction field entirely. This is NOT a replacement for the LLM
+     * decision — it's a safety net.
+     *
+     * Design: Detect strong personal-fact signals in the query while explicitly
+     * rejecting transient states. Returns a plan with 0.8 confidence so it
+     * clears the 0.7 threshold in the scheduler.
+     */
+    private fun inferMemoryExtractionFromQuery(query: String): com.example.llmapp.core.orchestrator.MemoryExtractionPlan {
+        val lower = query.lowercase().trim()
+
+        // Reject obvious transient states first
+        val transientSignals = listOf("i am tired", "i'm tired", "i am hungry", "i'm hungry",
+            "i am busy", "i'm busy", "i am bored", "i'm bored", "i feel", "today was",
+            "should i", "can you", "what is", "how to", "how do")
+        if (transientSignals.any { lower.contains(it) }) {
+            return com.example.llmapp.core.orchestrator.MemoryExtractionPlan.DISABLED
+        }
+
+        // Check for strong personal-fact signals
+        val factSignals = listOf(
+            "my name is", "i am ", "i'm ", "i work", "i live", "i use ",
+            "i prefer", "i like ", "i love ", "i hate ", "my favorite",
+            "i have been", "i've been", "i study", "i'm learning",
+            "remember that", "remember this", "save this", "save it",
+            "note that", "don't forget"
+        )
+        if (factSignals.any { lower.contains(it) }) {
+            return com.example.llmapp.core.orchestrator.MemoryExtractionPlan(
+                enabled = true,
+                confidence = 0.8f,
+                reason = "heuristic_fallback"
+            )
+        }
+
+        return com.example.llmapp.core.orchestrator.MemoryExtractionPlan.DISABLED
     }
 }

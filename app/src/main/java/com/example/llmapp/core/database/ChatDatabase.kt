@@ -21,7 +21,7 @@ import androidx.room.RoomDatabase
         ChapterEntity::class,
         BookEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {

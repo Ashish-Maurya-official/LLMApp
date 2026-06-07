@@ -58,6 +58,21 @@ interface MemoryDao {
     @Query("UPDATE semantic_memories SET accessCount = accessCount + 1, lastAccessed = :ts WHERE id IN (:ids)")
     fun batchUpdateSemanticAccess(ids: List<Long>, ts: Long = System.currentTimeMillis())
 
+    @Query("UPDATE semantic_memories SET importanceScore = :score, accessCount = accessCount + 1, lastAccessed = :ts WHERE id = :id")
+    fun updateSemanticImportance(id: Long, score: Float, ts: Long = System.currentTimeMillis())
+
+    @Query("SELECT * FROM semantic_memories ORDER BY isPinned DESC, importanceScore DESC, timestamp DESC")
+    fun getAllSemanticMemoriesFlow(): kotlinx.coroutines.flow.Flow<List<SemanticMemoryEntity>>
+
+    @Query("DELETE FROM semantic_memories WHERE id = :id")
+    fun deleteSemanticMemory(id: Long)
+
+    @Query("UPDATE semantic_memories SET content = :newContent, originalContent = :originalContent, isUserModified = 1, timestamp = :ts WHERE id = :id")
+    fun updateSemanticMemoryUserEdit(id: Long, newContent: String, originalContent: String, ts: Long)
+
+    @Query("UPDATE semantic_memories SET isPinned = :isPinned WHERE id = :id")
+    fun toggleSemanticMemoryPin(id: Long, isPinned: Int)
+
     // ── Episode Store ────────────────────────────────────────────────────────
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

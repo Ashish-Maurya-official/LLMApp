@@ -47,6 +47,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
     var equilibriumMonitor: com.example.llmapp.core.telemetry.EquilibriumMonitor? = null
     var settingsManager: com.example.llmapp.core.settings.SettingsManager? = null
     var memoryAgent: com.example.llmapp.core.memory.MemoryAgent? = null
+    var memoryExtractor: com.example.llmapp.core.memory.MemoryExtractor? = null
     var workers: List<CognitiveWorker> = emptyList()
 
     var llmInferenceManager: com.example.llmapp.core.inference.LlmInferenceManager? = null
@@ -104,6 +105,13 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
         }
     }
 
+    private data class GenerationContext(
+        val generationId: String,
+        val memoryExtractionPlan: com.example.llmapp.core.orchestrator.MemoryExtractionPlan?
+    )
+    
+    private val generationContexts = mutableMapOf<String, GenerationContext>()
+
     init {
         telemetry.start()
         tokenAccumulator.start()
@@ -129,7 +137,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
         when (event) {
             is CognitiveEvent.RuntimeEvent.GenerationRequested -> {
                 Log.d("CognitiveTaskScheduler", "Generation Requested: ${event.generationId}")
-                _state.value = _state.value.copy(activeGenerationId = event.generationId, phase = ExecutionPhase.GENERATING)
+                _state.value = _state.value.copy(activeGenerationId = event.generationId, phase = ExecutionPhase.GENERATING, currentQuery = event.rawQuery)
                 tokenBuffer.clear()
                 activeJob?.cancel()
                 val cancellationToken = com.example.llmapp.core.orchestrator.CancellationToken()
@@ -156,6 +164,13 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                         if (cancellationToken.isCancelled) return@launch
                         
                         val plan = com.example.llmapp.core.inference.ExecutionGraph.parseCognitivePlan(orchestratorJson, event.rawQuery)
+                        
+                        // Save Generation Context for post-generation background tasks
+                        generationContexts[event.generationId] = GenerationContext(
+                            generationId = event.generationId,
+                            memoryExtractionPlan = plan.memoryExtraction
+                        )
+                        
                         emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(planThoughtId, "Response planned", event.generationId))
                         
                         // ── PARALLEL COGNITIVE PROCESSES ──────────────────────────────
@@ -360,6 +375,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
             }
             is CognitiveEvent.RuntimeEvent.StopGeneration -> {
                 Log.d("CognitiveTaskScheduler", "Stop requested for gen: ${event.generationId}")
+                generationContexts.remove(event.generationId)
                 if (_state.value.activeGenerationId == event.generationId) {
                     _state.value = _state.value.copy(activeGenerationId = null, phase = ExecutionPhase.IDLE)
                     activeJob?.cancel()
@@ -391,77 +407,40 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 }
             }
             is CognitiveEvent.RuntimeEvent.GenerationComplete -> {
+                val ctx = generationContexts.remove(event.generationId)
+                
                 if (_state.value.activeGenerationId == event.generationId) {
                     _state.value = _state.value.copy(phase = ExecutionPhase.IDLE)
-                    
-                    // --- ATOMIC COGNITIVE STATE COMMIT ---
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val sessionId = _state.value.activeGenerationId ?: "unknown"
-                            
-                            // Mocking an inferred semantic memory for testing
-                            val newMemories = listOf(
-                                com.example.llmapp.core.database.MemoryEntity(
-                                    sessionId = sessionId,
-                                    type = "semantic",
-                                    content = "Agent successfully generated a response for session $sessionId.",
-                                    trustZone = 2 // Agent Inferred
+                    // --- ASYNC MEMORY EXTRACTION ---
+                    val extractionPlan = ctx?.memoryExtractionPlan
+                    Log.d("CognitiveTaskScheduler", "MemoryExtraction Decision: ctx=${ctx != null}, enabled=${extractionPlan?.enabled}, confidence=${extractionPlan?.confidence}, reason=${extractionPlan?.reason}, query=${_state.value.currentQuery}")
+                    if (extractionPlan?.enabled == true && extractionPlan.confidence > 0.7f) {
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                // Wait for the main model's generation job to fully complete
+                                // and release GPU/NPU resources before using the orchestrator.
+                                llmInferenceManager?.awaitMainGenerationComplete()
+                                
+                                val sessionId = event.generationId
+                                val userMessage = _state.value.currentQuery
+                                
+                                Log.d("CognitiveTaskScheduler", "Triggering MemoryExtraction: Reason=${extractionPlan.reason}, Conf=${extractionPlan.confidence}")
+                                memoryExtractor?.extractAndSaveAsync(userMessage, sessionId)
+                                
+                            } catch (e: Exception) {
+                                Log.e("CognitiveTaskScheduler", "CRITICAL: Memory Extraction Failed!", e)
+                                val errorMessage = e.message ?: "Unknown Extraction Failure"
+                                replayTracer?.logEvent(
+                                    com.example.llmapp.core.telemetry.TraceEvent.Error(
+                                        generationId = event.generationId,
+                                        errorType = "MemoryExtractionError",
+                                        message = errorMessage
+                                    )
                                 )
-                            )
-                            val newGoals = emptyList<com.example.llmapp.core.database.GoalEntity>()
-
-                            // Calculate epistemic hash
-                            val recentMemories = chatDao?.getMemoriesByType("semantic") ?: emptyList()
-                            val stateHash = EpistemicLedger.calculateStateHash(recentMemories + newMemories)
-                            
-                            val snapshot = com.example.llmapp.core.database.CognitiveSnapshotEntity(
-                                sessionId = sessionId,
-                                epistemicStateHash = stateHash,
-                                version = 1
-                            )
-
-                            // Execute Atomic Transaction using Room's native coroutine extension
-                            chatDatabase?.withTransaction {
-                                if (newMemories.isNotEmpty()) {
-                                    val safeToProceed = equilibriumMonitor?.logMemoryMutation() ?: true
-                                    if (safeToProceed) {
-                                        cognitiveStateDao?.insertMemories(newMemories)
-                                    } else {
-                                        // Emit an Error to trigger cool-down if stuck in a hallucination loop
-                                        throw IllegalStateException("Equilibrium Mutability Threshold Exceeded")
-                                    }
-                                }
-                                if (newGoals.isNotEmpty()) cognitiveStateDao?.insertGoals(newGoals)
-                                cognitiveStateDao?.insertSnapshot(snapshot)
                             }
-                            Log.d("CognitiveTaskScheduler", "Atomic state committed successfully: \$stateHash")
-                            
-                            // Log Trace
-                            replayTracer?.logEvent(
-                                com.example.llmapp.core.telemetry.TraceEvent.MemoryCommit(
-                                    generationId = sessionId,
-                                    memoriesInserted = newMemories.size,
-                                    epistemicHash = stateHash
-                                )
-                            )
-                            
-                        } catch (e: Exception) {
-                            Log.e("CognitiveTaskScheduler", "CRITICAL: Atomic State Transaction Failed!", e)
-                            
-                            val errorMessage = e.message ?: "Unknown Transaction Failure"
-                            replayTracer?.logEvent(
-                                com.example.llmapp.core.telemetry.TraceEvent.Error(
-                                    generationId = _state.value.activeGenerationId,
-                                    errorType = "StateCorruptionError",
-                                    message = errorMessage
-                                )
-                            )
-                            
-                            emit(CognitiveEvent.RuntimeEvent.Error(
-                                CognitiveError.StateCorruptionError("Failed to commit cognitive state: \$errorMessage"),
-                                event.generationId
-                            ))
                         }
+                    } else {
+                        Log.d("CognitiveTaskScheduler", "MemoryExtraction SKIPPED: Plan did not pass gate.")
                     }
                 }
             }

@@ -521,6 +521,15 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
             }
         }
     }
+
+    /**
+     * Suspends until the main model's current generation job completes.
+     * Use this to safely wait for GPU/NPU resources to be released before
+     * running another inference (e.g., memory extraction on the orchestrator).
+     */
+    suspend fun awaitMainGenerationComplete() {
+        mainGenerationJob?.join()
+    }
     
     // Fallback legacy method (points to main engine)
     fun loadModel(modelPath: String, hardwareBackend: String = "Auto"): String = runBlocking {

@@ -12,7 +12,12 @@ data class SemanticMemoryEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val content: String,             // The fact itself
     val importanceScore: Float = 0.5f,
+    val confidenceScore: Float = 0.5f,
+    val category: String = "general",
     val epistemicState: String = "ASSUMED", // VERIFIED, PROBABLE, ASSUMED, CONTRADICTED
+    val isPinned: Boolean = false,
+    val isUserModified: Boolean = false,
+    val originalContent: String? = null,
     val embedding: ByteArray? = null, // Future: vector embeddings
     val accessCount: Int = 1,
     val lastAccessed: Long = System.currentTimeMillis(),

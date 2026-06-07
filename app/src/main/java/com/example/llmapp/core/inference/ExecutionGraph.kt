@@ -18,7 +18,7 @@ object ExecutionGraph {
             
             RULES:
             1. If the user says a simple greeting like "hi", "hello", "how are you", cognitiveDepth MUST be 1, tools MUST be NONE, and memoryPlan.enabled MUST be false.
-            2. ONLY use WEB_SEARCH if the user asks for real-time information, news, or facts you don't know.
+            2. ONLY use WEB_SEARCH if the user asks for real-time information, news, or facts you don't know. If using WEB_SEARCH, provide a specific search string in the 'query' field.
             3. ONLY use FLASHLIGHT if the user explicitly asks to turn on or off the flashlight.
             4. If the user asks for coding, complex reasoning, or web search, cognitiveDepth MUST be 2. Otherwise, set it to 1.
             5. Set memoryPlan.enabled=true when the user references personal info, past conversations, preferences, or previously discussed facts. Categories: PROFILE (name, DOB, location, preferences), SEMANTIC (learned facts), EPISODIC (past conversation topics). Set goal to describe WHAT to find. Set importance 0-1 (1.0=critical to answer, 0.3=nice to have). Do NOT generate search keywords.
@@ -35,7 +35,12 @@ object ExecutionGraph {
                 "categories": [],
                 "importance": 0.0
               },
-              "tools": [{"name": "NONE"}],
+              "tools": [
+                {
+                  "name": "NONE",
+                  "query": null
+                }
+              ],
               "rewrittenQuery": "string"
             }
             <end_of_turn>
@@ -154,6 +159,7 @@ object ExecutionGraph {
                             name = t.optString("name", "NONE"),
                             priority = t.optInt("priority", 1),
                             required = t.optBoolean("required", false),
+                            query = if (t.isNull("query")) null else t.optString("query"),
                             parameters = if (paramsMap.isEmpty()) null else paramsMap
                         )
                     )

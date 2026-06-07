@@ -44,12 +44,7 @@ sealed interface CognitiveEvent {
         data class UserInput(val text: String, override val timestamp: Long = System.currentTimeMillis()) : UIEvent
     }
 
-    // Tool Events
-    sealed interface ToolEvent : CognitiveEvent {
-        val generationId: String
-        data class SearchRequested(val query: String, override val generationId: String, override val timestamp: Long = System.currentTimeMillis()) : ToolEvent
-        data class SearchCompleted(val results: String, override val generationId: String, override val timestamp: Long = System.currentTimeMillis()) : ToolEvent
-    }
+    // Tool Events removed — execution happens directly via CognitiveWorkers
 
     // Thought Events — typed cognitive thought lifecycle (replaces <thought> XML tags)
     sealed interface ThoughtEvent : CognitiveEvent {

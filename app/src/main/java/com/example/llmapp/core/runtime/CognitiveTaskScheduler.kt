@@ -47,6 +47,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
     var equilibriumMonitor: com.example.llmapp.core.telemetry.EquilibriumMonitor? = null
     var settingsManager: com.example.llmapp.core.settings.SettingsManager? = null
     var memoryAgent: com.example.llmapp.core.memory.MemoryAgent? = null
+    var workers: List<CognitiveWorker> = emptyList()
 
     var llmInferenceManager: com.example.llmapp.core.inference.LlmInferenceManager? = null
         set(value) {
@@ -76,7 +77,6 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
 
     private var activeJob: Job? = null
     private val tokenBuffer = StringBuilder()
-    private val SENTINEL_REGEX = Regex("""\[SEARCH_NEEDED(?::\s*([^\]]+))?\]""")
 
     private val telemetry = CognitiveTelemetry(scope) { telemetryEvent ->
         scope.launch { emit(telemetryEvent) }
@@ -201,23 +201,25 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                         if (plan.tools.isNotEmpty() && plan.tools[0].name != "NONE") {
                             _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
                             toolThoughtId = java.util.UUID.randomUUID().toString()
-                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(toolThoughtId!!, ThoughtSource.TOOL_EXECUTOR, "Executing: ${plan.tools.joinToString { it.name }}", event.generationId))
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(toolThoughtId, ThoughtSource.TOOL_EXECUTOR, "Executing: ${plan.tools.joinToString { it.name }}", event.generationId))
                             
                             val deferredResults = plan.tools.map { tool ->
                                 async {
-                                    if (tool.name == "WEB_SEARCH") {
-                                        val skill = com.example.llmapp.core.skills.WebSearchSkill()
-                                        skill.search(plan.rewrittenQuery).second
-                                    } else {
-                                        "Tool ${tool.name} executed."
-                                    }
+                                    val worker = workers.find { it.name == tool.name }
+                                    worker?.execute(tool)?.let { workerResult ->
+                                        when (workerResult) {
+                                            is WorkerResult.Success -> workerResult.result
+                                            is WorkerResult.Error -> "Tool ${tool.name} failed: ${workerResult.error}"
+                                            is WorkerResult.Skipped -> "Tool ${tool.name} skipped."
+                                        }
+                                    } ?: "Tool ${tool.name} not found."
                                 }
                             }
                             
                             deferredResults.forEachIndexed { index, deferred ->
                                 toolResults[plan.tools[index].name] = deferred.await()
                             }
-                            emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(toolThoughtId!!, "Tools completed", event.generationId))
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(toolThoughtId, "Tools completed", event.generationId))
                         }
 
                         // Await memory result
@@ -303,11 +305,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                     }
                 }
             }
-            is CognitiveEvent.ToolEvent.SearchCompleted -> {
-                Log.d("CognitiveTaskScheduler", "SearchCompleted: resetting phase to IDLE for re-generation.")
-                // Reset phase so the sentinel loop guard allows processing the new generation cleanly.
-                _state.value = _state.value.copy(phase = ExecutionPhase.IDLE)
-            }
+
 
             is CognitiveEvent.SystemEvent.TelemetryUpdated -> {
                 healthMonitor.onTelemetry(event)
@@ -390,26 +388,6 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                         event.generationId
                     ))
                     return
-                }
-                
-                // Sentinel detection (Web Search Tool)
-                // ONLY trigger on the explicit [SEARCH_NEEDED] token — never on refusal phrases.
-                // Refusal phrases fire on EVERY response (including post-search ones), causing
-                // an infinite loop: LLM -> refusal detected -> search -> LLM -> refusal detected -> ...
-                val sentinelMatch = SENTINEL_REGEX.find(raw)
-                val needsSearch = sentinelMatch != null
-                
-                // Loop guard: only trigger if we are NOT already mid-retrieval
-                if (needsSearch && _state.value.phase != ExecutionPhase.RETRIEVING) {
-                    val extractedQuery = sentinelMatch!!.groupValues.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() } ?: ""
-                    Log.d("CognitiveTaskScheduler", "[SEARCH_NEEDED] sentinel detected. Query: '$extractedQuery'")
-                    
-                    // Stop LLM immediately
-                    activeJob?.cancel()
-                    llmInferenceManager?.stopGeneration()
-                    _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
-                    tokenBuffer.clear()
-                    emit(CognitiveEvent.ToolEvent.SearchRequested(extractedQuery, event.generationId))
                 }
             }
             is CognitiveEvent.RuntimeEvent.GenerationComplete -> {

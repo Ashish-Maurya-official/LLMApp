@@ -34,6 +34,7 @@ data class ToolRequest(
     val name: String,
     val priority: Int,
     val required: Boolean,
+    val query: String? = null,
     val parameters: Map<String, String>? = null
 )
 

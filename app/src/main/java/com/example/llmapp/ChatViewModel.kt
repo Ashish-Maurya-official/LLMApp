@@ -485,10 +485,7 @@ class ChatViewModel : ViewModel() {
                 _uiState.update { it.copy(isGenerating = false) }
             }
 
-            is com.example.llmapp.core.runtime.CognitiveEvent.ToolEvent.SearchRequested -> {
-                _streamingState.value = _streamingState.value.copy()
-                performWebSearch(event.query, event.generationId)
-            }
+
 
             is com.example.llmapp.core.runtime.CognitiveEvent.SystemEvent.DegradationRequested -> {
                 activeDegradationLevel = event.level
@@ -508,246 +505,7 @@ class ChatViewModel : ViewModel() {
 
     // handleVoiceEvent removed — ConversationEngine now manages all voice state transitions internally.
 
-    // ── Web search ────────────────────────────────────────────────────────────
-    private fun performWebSearch(query: String, genId: String) {
-        if (searchChainDepth >= 2) {
-            Log.w("ChatViewModel", "Max search chain depth reached. Forcing LLM to answer.")
-            fallbackGenerationWithoutSearch(genId, "Max search depth reached")
-            return
-        }
-        searchChainDepth++
 
-        Log.d("ChatViewModel", "performWebSearch: \"$query\"")
-        val intent = com.example.llmapp.core.search.SearchIntentClassifier.classify(query, allMessages)
-        
-        // Emit search thought event
-        val searchThoughtId = java.util.UUID.randomUUID().toString()
-        activeSearchThoughtId = searchThoughtId
-        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtStarted(
-            searchThoughtId, com.example.llmapp.core.runtime.ThoughtSource.WEB_SEARCH,
-            "Searching web", genId
-        ))
-        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtUpdated(
-            searchThoughtId, "Searching: \"$query\"", generationId = genId
-        ))
-
-        viewModelScope.launch(Dispatchers.IO) {
-            val orchestrator = searchOrchestrator
-            if (orchestrator != null) {
-                val result = try {
-                    orchestrator.resolveSearch(query, forceSearch = true)
-                } catch (e: Exception) {
-                    // Absolute last resort — orchestrator itself threw
-                    Log.e("ChatViewModel", "Orchestrator threw unexpectedly: ${e.message}")
-                    com.example.llmapp.core.search.orchestration.OrchestratorResult.Failed("Internal error")
-                }
-
-                withContext(Dispatchers.Main) {
-                    when (result) {
-                        is com.example.llmapp.core.search.orchestration.OrchestratorResult.Success -> {
-                            // ✅ Real results — inject into prompt and re-generate
-                            Log.d("ChatViewModel", "Search success via ${result.response.providerUsed}")
-                            storeObservation(result.formattedContext, result.statusMessage, genId, intent.type)
-                        }
-                        is com.example.llmapp.core.search.orchestration.OrchestratorResult.NoResults -> {
-                            // ⚠️ Search ran but found nothing
-                            Log.w("ChatViewModel", "Search returned no results for: \"${result.query}\"")
-                            if (searchRetryCount < 1) {
-                                // Ask the LLM to provide a better, more specific query
-                                searchRetryCount++
-                                Log.d("ChatViewModel", "Asking LLM to refine query (retry #$searchRetryCount)")
-                                retryWithRefinedQuery(result.query, genId)
-                            } else {
-                                // Already retried once — use LLM internal knowledge
-                                Log.w("ChatViewModel", "Retry limit reached. Falling back to internal knowledge.")
-                                val noResultNote = "Web search returned no results for \"${result.query}\". " +
-                                    "Answer using your internal knowledge and clearly state if you are uncertain."
-                                storeObservation(noResultNote, "No results found", genId, intent.type)
-                            }
-                        }
-                        is com.example.llmapp.core.search.orchestration.OrchestratorResult.Failed -> {
-                            // ❌ Network/API failure — proceed without web context, don't poison prompt
-                            Log.e("ChatViewModel", "Search failed: ${result.error}")
-                            fallbackGenerationWithoutSearch(genId, reason = result.error)
-                        }
-                        is com.example.llmapp.core.search.orchestration.OrchestratorResult.Skipped -> {
-                            // ⏭️ Classifier said no search needed — proceed normally
-                            Log.d("ChatViewModel", "Search skipped: ${result.reason}")
-                            fallbackGenerationWithoutSearch(genId, reason = null)
-                        }
-                    }
-                }
-            } else {
-                // Fallback: legacy DuckDuckGo skill if orchestrator not wired yet
-                val skill = com.example.llmapp.core.skills.WebSearchSkill()
-                val (uiText, llmText) = skill.search(query)
-                withContext(Dispatchers.Main) { storeObservation(llmText, uiText, genId, intent.type) }
-            }
-        }
-    }
-
-    /**
-     * Asks the LLM to produce a better [SEARCH_NEEDED:] sentinel when the first search returned zero results.
-     * Builds a targeted prompt that shows the LLM what was searched and tells it to try a different,
-     * more specific query. The scheduler's sentinel detector picks up the new sentinel automatically.
-     * Must be called from the Main dispatcher.
-     */
-    private fun retryWithRefinedQuery(failedQuery: String, genId: String) {
-        Log.d("ChatViewModel", "Requesting refined query. Failed query was: \"$failedQuery\"")
-
-        // Signal scheduler that the current search cycle is done so it resets properly
-        cognitiveTaskScheduler.emit(
-            com.example.llmapp.core.runtime.CognitiveEvent.ToolEvent.SearchCompleted("", genId)
-        )
-
-        _uiState.update { it.copy(isGenerating = true) }
-        viewModelScope.launch(Dispatchers.Default) {
-            val refinementPrompt = buildQueryRefinementPrompt(currentUserQuery, failedQuery)
-            val newGenId = java.util.UUID.randomUUID().toString()
-            cognitiveTaskScheduler.emit(
-                com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(
-                    currentUserQuery, refinementPrompt, newGenId
-                )
-            )
-        }
-    }
-
-    /**
-     * Builds a prompt that shows the LLM its failed query and instructs it to output
-     * a new, more specific [SEARCH_NEEDED: ...] sentinel.
-     */
-    private fun buildQueryRefinementPrompt(userQuestion: String, failedQuery: String): String {
-        val sb = StringBuilder()
-        sb.append("<start_of_turn>user\n")
-        
-        val mgr = settingsManager
-        val customPrompt = mgr?.systemPrompt ?: ""
-        val regulatoryPrompt = socioCognitiveRegulator.generateRegulatoryPrompt()
-        val antiDependencyPrompt = identityAnchorManager?.checkAntiDependencyProtocol(currentUserQuery) ?: ""
-        val systemPromptOverride = customPrompt + "\n" + regulatoryPrompt + "\n" + antiDependencyPrompt
-        
-        val ctx = com.example.llmapp.core.prompts.models.PromptContext(
-            systemPromptOverride = systemPromptOverride,
-            userName = mgr?.userName ?: "",
-            userDob = mgr?.userDob ?: "",
-            userLocation = mgr?.userLocation ?: "",
-            userBio = mgr?.userBio ?: "",
-            activeDegradationLevel = activeDegradationLevel,
-            contextLimit = mgr?.contextLimit ?: 10,
-            perMessageCap = perMessageCharCap()
-        )
-        sb.append(com.example.llmapp.core.prompts.builders.SystemPromptBuilder.build(ctx))
-        sb.append("<end_of_turn>\n<start_of_turn>model\nUnderstood. I write precise search queries.\n<end_of_turn>\n")
-        sb.append("<start_of_turn>user\n")
-        sb.append("The user asked: \"$userQuestion\"\n\n")
-        sb.append("You previously searched for: \"$failedQuery\" — but it returned ZERO results.\n")
-        sb.append("The query was too generic or used the wrong keywords.\n\n")
-        sb.append("== YOUR TASK ==\n")
-        sb.append("Output a NEW, completely different, more specific [SEARCH_NEEDED: ...] query.\n")
-        sb.append("Rules for the new query:\n")
-        sb.append("  - Use different keywords than the failed query.\n")
-        sb.append("  - Be more specific: add location, year, full name, tournament, product model.\n")
-        sb.append("  - Try synonyms: e.g., if 'score' failed, try 'result' or 'match update'.\n")
-        sb.append("  - If weather failed, try adding country name or nearest major city.\n")
-        sb.append("  - Keep it to 4-8 words max, all keywords, no question words.\n\n")
-        sb.append("Output ONLY the sentinel on its own line, nothing else:\n")
-        sb.append("[SEARCH_NEEDED: <your improved query>]\n")
-        sb.append("<end_of_turn>\n<start_of_turn>model\n")
-        return sb.toString()
-    }
-
-    /**
-     * Called when search fails, is skipped, or no results are found.
-     * Continues generation WITHOUT injecting any search context, so the LLM uses its own knowledge.
-     * [reason] is logged and shown in the action chip if non-null.
-     * Must be called from the Main dispatcher.
-     */
-    private fun fallbackGenerationWithoutSearch(genId: String, reason: String?) {
-        Log.d("ChatViewModel", "Continuing without web search. Reason: ${reason ?: "skipped"}")
-        // Complete the search thought event if active
-        activeSearchThoughtId?.let { thoughtId ->
-            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtCompleted(
-                thoughtId, reason ?: "Search skipped", genId
-            ))
-            activeSearchThoughtId = null
-        }
-        // Signal scheduler that search is done (empty context — doesn't block pipeline)
-        cognitiveTaskScheduler.emit(
-            com.example.llmapp.core.runtime.CognitiveEvent.ToolEvent.SearchCompleted("", genId)
-        )
-        // Re-trigger generation WITHOUT web context using the standard prompt builder
-        _uiState.update { it.copy(isGenerating = true) }
-        viewModelScope.launch(Dispatchers.Default) {
-            val mgr = settingsManager
-            val customPrompt = mgr?.systemPrompt ?: ""
-            val regulatoryPrompt = socioCognitiveRegulator.generateRegulatoryPrompt()
-            val antiDependencyPrompt = identityAnchorManager?.checkAntiDependencyProtocol(currentUserQuery) ?: ""
-            val systemPromptOverride = customPrompt + "\n" + regulatoryPrompt + "\n" + antiDependencyPrompt
-
-            val ctx = com.example.llmapp.core.prompts.models.PromptContext(
-                systemPromptOverride = systemPromptOverride,
-                userName = mgr?.userName ?: "",
-                userDob = mgr?.userDob ?: "",
-                userLocation = mgr?.userLocation ?: "",
-                userBio = mgr?.userBio ?: "",
-                activeDegradationLevel = activeDegradationLevel,
-                contextLimit = mgr?.contextLimit ?: 10,
-                perMessageCap = perMessageCharCap()
-            )
-            val fallbackPrompt = com.example.llmapp.core.prompts.PromptPipeline.buildNormalPrompt(currentUserQuery, allMessages, ctx)
-            val newGenId = java.util.UUID.randomUUID().toString()
-            cognitiveTaskScheduler.emit(
-                com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(
-                    currentUserQuery, fallbackPrompt, newGenId
-                )
-            )
-        }
-    }
-
-    private fun storeObservation(llmText: String, uiText: String?, genId: String, searchType: com.example.llmapp.core.search.SearchType = com.example.llmapp.core.search.SearchType.NEWS) {
-        // Guard: if llmText is empty/blank, treat as no-results fallback
-        if (llmText.isBlank()) {
-            fallbackGenerationWithoutSearch(genId, reason = null)
-            return
-        }
-        // Complete the search thought event with result summary
-        activeSearchThoughtId?.let { thoughtId ->
-            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtCompleted(
-                thoughtId, uiText ?: "Search complete", genId
-            ))
-            activeSearchThoughtId = null
-        }
-
-        // Let the scheduler know search is complete so it resets RETRIEVING phase → IDLE
-        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ToolEvent.SearchCompleted(llmText, genId))
-
-        // Re-trigger generation with web search results injected into the prompt.
-        Log.d("ChatViewModel", "Web search complete. Re-generating with injected context.")
-        _uiState.update { it.copy(isGenerating = true) }
-        viewModelScope.launch(Dispatchers.Default) {
-            val mgr = settingsManager
-            val customPrompt = mgr?.systemPrompt ?: ""
-            val regulatoryPrompt = socioCognitiveRegulator.generateRegulatoryPrompt()
-            val antiDependencyPrompt = identityAnchorManager?.checkAntiDependencyProtocol(currentUserQuery) ?: ""
-            val systemPromptOverride = customPrompt + "\n" + regulatoryPrompt + "\n" + antiDependencyPrompt
-
-            val ctx = com.example.llmapp.core.prompts.models.PromptContext(
-                systemPromptOverride = systemPromptOverride,
-                userName = mgr?.userName ?: "",
-                userDob = mgr?.userDob ?: "",
-                userLocation = mgr?.userLocation ?: "",
-                userBio = mgr?.userBio ?: "",
-                activeDegradationLevel = activeDegradationLevel,
-                contextLimit = mgr?.contextLimit ?: 10,
-                perMessageCap = perMessageCharCap()
-            )
-            val promptWithContext = com.example.llmapp.core.prompts.PromptPipeline.buildPromptWithContext(
-                currentUserQuery, llmText, searchType, allMessages, ctx
-            )
-            val newGenId = java.util.UUID.randomUUID().toString()
-            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(currentUserQuery, promptWithContext, newGenId))
-        }
-    }
 
     // ── Intent processor ──────────────────────────────────────────────────────
     fun processIntent(intent: ChatIntent) {
@@ -980,107 +738,52 @@ class ChatViewModel : ViewModel() {
 
         val genId = java.util.UUID.randomUUID().toString()
         
-        // ── Phase 1: System-Driven Intent Classification ──
-        val intent = com.example.llmapp.core.search.SearchIntentClassifier.classify(text, allMessages)
-        
         viewModelScope.launch(Dispatchers.Default) {
             val pacingDelay = socioCognitiveRegulator.calculatePacingDelayMs()
             if (pacingDelay > 0) {
                 kotlinx.coroutines.delay(pacingDelay)
             }
             
-            if (intent.needed && intent.query != null) {
-                // We need search! Let's update UI and orchestrate the search directly
-                withContext(Dispatchers.Main) {
-                    // Emit search thought event
-                    val searchThoughtId = java.util.UUID.randomUUID().toString()
-                    activeSearchThoughtId = searchThoughtId
-                    cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtStarted(
-                        searchThoughtId, com.example.llmapp.core.runtime.ThoughtSource.WEB_SEARCH,
-                        "Searching web", genId
-                    ))
-                    cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtUpdated(
-                        searchThoughtId, "Searching: \"${intent.query}\"", generationId = genId
-                    ))
-                }
-                
-                val orchestrator = searchOrchestrator
-                if (orchestrator != null) {
-                    val result = try {
-                        orchestrator.resolveSearch(intent.query, forceSearch = true)
-                    } catch (e: Exception) {
-                        Log.e("ChatViewModel", "Orchestrator threw unexpectedly: ${e.message}")
-                        com.example.llmapp.core.search.orchestration.OrchestratorResult.Failed("Internal error")
-                    }
-                    
-                    withContext(Dispatchers.Main) {
-                        when (result) {
-                            is com.example.llmapp.core.search.orchestration.OrchestratorResult.Success -> {
-                                storeObservation(result.formattedContext, result.statusMessage, genId, intent.type)
-                            }
-                            is com.example.llmapp.core.search.orchestration.OrchestratorResult.NoResults -> {
-                                val noResultNote = "Web search returned no results for \"${result.query}\". " +
-                                    "Answer using your internal knowledge and clearly state if you are uncertain."
-                                storeObservation(noResultNote, "No results found", genId, intent.type)
-                            }
-                            is com.example.llmapp.core.search.orchestration.OrchestratorResult.Failed -> {
-                                fallbackGenerationWithoutSearch(genId, reason = result.error)
-                            }
-                            is com.example.llmapp.core.search.orchestration.OrchestratorResult.Skipped -> {
-                                fallbackGenerationWithoutSearch(genId, reason = null)
-                            }
-                        }
-                    }
-                } else {
-                    // Fallback duckduckgo skill
-                    val skill = com.example.llmapp.core.skills.WebSearchSkill()
-                    val (uiText, llmText) = skill.search(intent.query)
-                    withContext(Dispatchers.Main) { 
-                        storeObservation(llmText, uiText, genId, intent.type) 
-                    }
-                }
-            } else {
-                // Direct Conversational response
-                val mgr = settingsManager
-                val customPrompt = mgr?.systemPrompt ?: ""
-                val regulatoryPrompt = socioCognitiveRegulator.generateRegulatoryPrompt()
-                val antiDependencyPrompt = identityAnchorManager?.checkAntiDependencyProtocol(text) ?: ""
-                
-                val suspended = intentThreadManager.popNextIntent()
-                val suspendedPrompt = if (suspended != null) {
-                    "\n[SOCIO-COGNITIVE: You were recently interrupted while answering '${suspended.originalPrompt}'. Your last words were '${suspended.partialResponse}'. If relevant to the current flow, you may briefly conclude that thought.]\n"
-                } else ""
+            // Direct Conversational response
+            val mgr = settingsManager
+            val customPrompt = mgr?.systemPrompt ?: ""
+            val regulatoryPrompt = socioCognitiveRegulator.generateRegulatoryPrompt()
+            val antiDependencyPrompt = identityAnchorManager?.checkAntiDependencyProtocol(text) ?: ""
+            
+            val suspended = intentThreadManager.popNextIntent()
+            val suspendedPrompt = if (suspended != null) {
+                "\n[SOCIO-COGNITIVE: You were recently interrupted while answering '${suspended.originalPrompt}'. Your last words were '${suspended.partialResponse}'. If relevant to the current flow, you may briefly conclude that thought.]\n"
+            } else ""
 
-                // Assemble memory observations
-                val sbMemories = StringBuilder()
-                if (activeDegradationLevel < com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.REDUCED_RETRIEVAL) {
-                    val memories = runCatching {
-                        withContext(Dispatchers.IO) {
-                            hybridRetriever?.retrieveRelevance(text) ?: emptyList()
-                        }
-                    }.getOrElse { emptyList() }
-                    if (memories.isNotEmpty()) {
-                        sbMemories.append("\nRelevant context from memory:\n")
-                        memories.forEach { sbMemories.append("- ${it.content}\n") }
+            // Assemble memory observations
+            val sbMemories = StringBuilder()
+            if (activeDegradationLevel < com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.REDUCED_RETRIEVAL) {
+                val memories = runCatching {
+                    withContext(Dispatchers.IO) {
+                        hybridRetriever?.retrieveRelevance(text) ?: emptyList()
                     }
+                }.getOrElse { emptyList() }
+                if (memories.isNotEmpty()) {
+                    sbMemories.append("\nRelevant context from memory:\n")
+                    memories.forEach { sbMemories.append("- ${it.content}\n") }
                 }
-                
-                val systemPromptOverride = customPrompt + "\n" + regulatoryPrompt + "\n" + antiDependencyPrompt + "\n" + suspendedPrompt + "\n" + sbMemories.toString()
-                
-                val ctx = com.example.llmapp.core.prompts.models.PromptContext(
-                    systemPromptOverride = systemPromptOverride,
-                    userName = mgr?.userName ?: "",
-                    userDob = mgr?.userDob ?: "",
-                    userLocation = mgr?.userLocation ?: "",
-                    userBio = mgr?.userBio ?: "",
-                    activeDegradationLevel = activeDegradationLevel,
-                    contextLimit = mgr?.contextLimit ?: 10,
-                    perMessageCap = perMessageCharCap()
-                )
-                
-                val prompt = com.example.llmapp.core.prompts.PromptPipeline.buildNormalPrompt(text, allMessages, ctx)
-                cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(text, prompt, genId))
             }
+            
+            val systemPromptOverride = customPrompt + "\n" + regulatoryPrompt + "\n" + antiDependencyPrompt + "\n" + suspendedPrompt + "\n" + sbMemories.toString()
+            
+            val ctx = com.example.llmapp.core.prompts.models.PromptContext(
+                systemPromptOverride = systemPromptOverride,
+                userName = mgr?.userName ?: "",
+                userDob = mgr?.userDob ?: "",
+                userLocation = mgr?.userLocation ?: "",
+                userBio = mgr?.userBio ?: "",
+                activeDegradationLevel = activeDegradationLevel,
+                contextLimit = mgr?.contextLimit ?: 10,
+                perMessageCap = perMessageCharCap()
+            )
+            
+            val prompt = com.example.llmapp.core.prompts.PromptPipeline.buildNormalPrompt(text, allMessages, ctx)
+            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(text, prompt, genId))
         }
     }
 

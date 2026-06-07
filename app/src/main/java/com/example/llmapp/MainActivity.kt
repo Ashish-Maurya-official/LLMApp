@@ -78,8 +78,12 @@ class MainActivity : ComponentActivity() {
         // Initialize Search System
         searchPreferences = com.example.llmapp.core.search.settings.SearchPreferences(this)
         secureSearchStorage = com.example.llmapp.core.search.settings.SecureSearchStorage(this)
-        viewModel.searchOrchestrator = com.example.llmapp.core.search.orchestration.SearchOrchestrator(
+        val orchestrator = com.example.llmapp.core.search.orchestration.SearchOrchestrator(
             searchPreferences, secureSearchStorage
+        )
+        viewModel.searchOrchestrator = orchestrator
+        viewModel.cognitiveTaskScheduler.workers = listOf(
+            com.example.llmapp.core.search.WebSearchAgent(orchestrator)
         )
 
         val chaosTestRunner = com.example.llmapp.core.runtime.ChaosTestRunner(viewModel.cognitiveTaskScheduler)

@@ -1,0 +1,1 @@
+package com.example.llmapp; import org.junit.Test; import com.google.ai.edge.litertlm.*; class ReflectTest { @Test fun printMethods() { val clazz = Backend::class.java; clazz.declaredClasses.forEach { println("CLASS: " + it.name) }; clazz.declaredMethods.forEach { println("METHOD: " + it.name) } } }

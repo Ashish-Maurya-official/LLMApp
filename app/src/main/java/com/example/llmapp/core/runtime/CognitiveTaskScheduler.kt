@@ -144,7 +144,14 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                         emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Level 1: Orchestrator Active...</thought>\n", false, event.generationId))
                         
                         val orchestratorPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorPrompt(event.rawQuery)
-                        val orchestratorJson = llmInferenceManager?.generateOrchestratorResponse(orchestratorPrompt) ?: "{}"
+                        // FIX(BUG 6): generateOrchestratorResponse is now a suspend fun
+                        // (was runBlocking which could deadlock the agentDispatcher pool)
+                        val orchestratorJson = try {
+                            llmInferenceManager?.generateOrchestratorResponse(orchestratorPrompt) ?: "{}"
+                        } catch (e: Throwable) {
+                            Log.w("CognitiveTaskScheduler", "Orchestrator inference failed: ${e.message}", e)
+                            "{}"
+                        }
                         
                         if (cancellationToken.isCancelled) return@launch
                         

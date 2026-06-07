@@ -1,0 +1,1 @@
+package com.example.llmapp; import com.google.ai.edge.litertlm.*; class Test { fun printMethods() { val clazz = Backend.GPU::class.java; clazz.declaredFields.forEach { println(it.name) }; clazz.declaredMethods.forEach { println(it.name) } } }

@@ -59,6 +59,9 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         }
     }
     
+    // ── GPU/NPU Capability Probe ─────────────────────────────────────────────
+    val gpuProbe = GpuCapabilityProbe(context)
+
     // ── Main Reasoning Engine (Level 2) ──────────────────────────────────────
     private var mainEngine: Engine? = null
     private var mainConversation: Conversation? = null
@@ -86,23 +89,30 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     private val inferenceMutex = Mutex()
     private val orchestratorMutex = Mutex()
     
-    private var currentGenerationJob: Job? = null
+    // FIX(BUG 7): Separate generation jobs for main and orchestrator engines
+    // Previously a single `currentGenerationJob` was shared — starting main inference
+    // would cancel an active orchestrator job and vice versa.
+    private var mainGenerationJob: Job? = null
+    private var orchestratorGenerationJob: Job? = null
 
     // ── Main Model Loading ────────────────────────────────────────────────────
     suspend fun loadMainModel(modelPath: String, hardwareBackend: String = "Auto"): LoadResult {
         return withContext(Dispatchers.IO) {
             inferenceMutex.withLock {
                 Log.d(TAG, "[LOAD_MAIN] Requested backend: $hardwareBackend")
+                
+                // FIX(BUG 4): Close Conversation BEFORE Engine to avoid native resource leaks
                 Log.d(TAG, "[LOAD_MAIN] Closing old main conversation...")
-                mainConversation?.close()
+                safeCloseConversation(mainConversation, "main")
                 mainConversation = null
                 Log.d(TAG, "[LOAD_MAIN] Closing old main engine...")
-                mainEngine?.close()
+                safeCloseEngine(mainEngine, "main")
                 mainEngine = null
                 
+                // FIX(BUG 5): Use delay() instead of Thread.sleep() — non-blocking
                 Log.d(TAG, "[LOAD_MAIN] Forcing GC and waiting for GPU resource release...")
                 System.gc()
-                Thread.sleep(1000) // GPU driver needs time to fully release VRAM
+                delay(1000) // Coroutine-safe delay — doesn't block the IO thread
                 
                 Log.d(TAG, "[LOAD_MAIN] Checking file existence for $modelPath...")
                 val file = File(modelPath)
@@ -126,9 +136,10 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     suspend fun unloadMainModel() {
         withContext(Dispatchers.IO) {
             inferenceMutex.withLock {
-                mainConversation?.close()
+                // FIX(BUG 4): Close Conversation BEFORE Engine
+                safeCloseConversation(mainConversation, "main")
                 mainConversation = null
-                mainEngine?.close()
+                safeCloseEngine(mainEngine, "main")
                 mainEngine = null
                 activeMainBackend = null
                 System.gc()
@@ -142,16 +153,19 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         return withContext(Dispatchers.IO) {
             orchestratorMutex.withLock {
                 Log.d(TAG, "[LOAD_ORCHESTRATOR] Requested backend: $hardwareBackend")
+                
+                // FIX(BUG 4): Close Conversation BEFORE Engine
                 Log.d(TAG, "[LOAD_ORCHESTRATOR] Closing old orchestrator conversation...")
-                orchestratorConversation?.close()
+                safeCloseConversation(orchestratorConversation, "orchestrator")
                 orchestratorConversation = null
                 Log.d(TAG, "[LOAD_ORCHESTRATOR] Closing old orchestrator engine...")
-                orchestratorEngine?.close()
+                safeCloseEngine(orchestratorEngine, "orchestrator")
                 orchestratorEngine = null
                 
+                // FIX(BUG 5): Use delay() instead of Thread.sleep()
                 Log.d(TAG, "[LOAD_ORCHESTRATOR] Forcing GC and waiting for resource release...")
                 System.gc()
-                Thread.sleep(500)
+                delay(500)
                 
                 Log.d(TAG, "[LOAD_ORCHESTRATOR] Checking file existence for $modelPath...")
                 val file = File(modelPath)
@@ -174,9 +188,10 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     suspend fun unloadOrchestratorModel() {
         withContext(Dispatchers.IO) {
             orchestratorMutex.withLock {
-                orchestratorConversation?.close()
+                // FIX(BUG 4): Close Conversation BEFORE Engine
+                safeCloseConversation(orchestratorConversation, "orchestrator")
                 orchestratorConversation = null
-                orchestratorEngine?.close()
+                safeCloseEngine(orchestratorEngine, "orchestrator")
                 orchestratorEngine = null
                 activeOrchestratorBackend = null
                 System.gc()
@@ -188,8 +203,16 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     /**
      * Loads the engine with the resolved backend, with a robust fallback chain:
      *   NPU → CPU  (if NPU was resolved)
-     *   GPU → CPU  (if GPU was resolved — rare after pre-flight)
+     *   GPU → CPU  (if GPU was resolved)
      *   CPU → (no fallback, throw)
+     *
+     * FIX(BUG 1): Before attempting GPU/NPU, runs the GpuCapabilityProbe to
+     * check if the hardware can even support the backend. If the probe fails,
+     * skips directly to CPU — preventing the native SIGSEGV that try-catch
+     * cannot catch.
+     *
+     * FIX(BUG 3): Uses crash-history flags to detect if a previous GPU attempt
+     * caused a process kill (SIGSEGV). If it did, auto-blocks GPU.
      *
      * Returns Pair(backendName, fallbackError?) — fallbackError is non-null if a fallback occurred.
      */
@@ -198,46 +221,97 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
 
         return when (preferredBackend) {
             "GPU" -> {
-                // Pre-flight already passed (resolveBackendPreference only emits "GPU" if safe)
-                try {
-                    loadWithBackend(modelPath, Backend.GPU(), "GPU", onLoaded)
-                    "GPU" to null
-                } catch (gpuException: Throwable) {
-                    Log.w(TAG, "[FALLBACK] GPU failed, falling back to CPU", gpuException)
+                // FIX(BUG 1 & 3): Pre-flight GPU capability check
+                if (!gpuProbe.isGpuSafe()) {
+                    val probeError = RuntimeException(
+                        "GPU probe BLOCKED initialization. Reason: ${gpuProbe.getDiagnostics()}\n" +
+                        "Falling back to CPU to prevent native crash (SIGSEGV)."
+                    )
+                    Log.w(TAG, "[FALLBACK] GPU BLOCKED by probe — going straight to CPU", probeError)
                     try {
-                        // GC before retry to release any partially-allocated GPU resources
-                        System.gc()
-                        Thread.sleep(500)
                         loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
-                        "CPU" to gpuException
+                        "CPU" to probeError
                     } catch (cpuException: Throwable) {
-                        Log.e(TAG, "[FALLBACK] Both GPU and CPU failed for $modelPath")
+                        Log.e(TAG, "[FALLBACK] CPU also failed after GPU probe block")
                         val combined = RuntimeException(
-                            "All backends failed. GPU: ${gpuException.message}, CPU: ${cpuException.message}"
+                            "GPU blocked by safety probe, CPU also failed: ${cpuException.message}"
                         )
-                        combined.addSuppressed(gpuException)
+                        combined.addSuppressed(probeError)
                         combined.addSuppressed(cpuException)
                         throw combined
+                    }
+                } else {
+                    // GPU probe passed — attempt GPU with crash detection
+                    try {
+                        gpuProbe.markGpuInitStarted() // Arm crash detector
+                        loadWithBackend(modelPath, Backend.GPU(), "GPU", onLoaded)
+                        gpuProbe.markGpuInitSucceeded() // Disarm — init survived
+                        "GPU" to null
+                    } catch (gpuException: Throwable) {
+                        // This catch only works for Java-level exceptions (not SIGSEGV).
+                        // If we reach here, it was a "soft" GPU failure (e.g. unsupported ops).
+                        // Clear the pending flag — this was NOT a SIGSEGV, so don't count it as a crash.
+                        gpuProbe.markGpuInitSucceeded() // Clears pending flag + resets crash counter
+                        Log.w(TAG, "[FALLBACK] GPU failed (Java exception: ${gpuException::class.simpleName}), falling back to CPU", gpuException)
+                        try {
+                            // GC before retry to release any partially-allocated GPU resources
+                            System.gc()
+                            Thread.sleep(500) // Blocking sleep is OK here — we're already in fallback
+                            loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
+                            "CPU" to gpuException
+                        } catch (cpuException: Throwable) {
+                            Log.e(TAG, "[FALLBACK] Both GPU and CPU failed for $modelPath")
+                            val combined = RuntimeException(
+                                "All backends failed. GPU: ${gpuException.message}, CPU: ${cpuException.message}"
+                            )
+                            combined.addSuppressed(gpuException)
+                            combined.addSuppressed(cpuException)
+                            throw combined
+                        }
                     }
                 }
             }
             "NPU" -> {
-                try {
-                    loadWithBackend(modelPath, Backend.NPU(), "NPU", onLoaded)
-                    "NPU" to null
-                } catch (npuException: Throwable) {
-                    Log.w(TAG, "[FALLBACK] NPU failed, falling back to CPU", npuException)
+                // FIX(BUG 1 & 3): Pre-flight NPU capability check
+                if (!gpuProbe.isNpuSafe()) {
+                    val probeError = RuntimeException(
+                        "NPU probe BLOCKED initialization. This device does not support NPU inference.\n" +
+                        "NPU requires Qualcomm Snapdragon 8 Gen 2+ with QAIRT runtime.\n" +
+                        "Diagnostics: ${gpuProbe.getDiagnostics()}"
+                    )
+                    Log.w(TAG, "[FALLBACK] NPU BLOCKED by probe — going straight to CPU", probeError)
                     try {
                         loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
-                        "CPU" to npuException
+                        "CPU" to probeError
                     } catch (cpuException: Throwable) {
-                        Log.e(TAG, "[FALLBACK] Both NPU and CPU failed for $modelPath")
                         val combined = RuntimeException(
-                            "All backends failed. NPU: ${npuException.message}, CPU: ${cpuException.message}"
+                            "NPU blocked by safety probe, CPU also failed: ${cpuException.message}"
                         )
-                        combined.addSuppressed(npuException)
+                        combined.addSuppressed(probeError)
                         combined.addSuppressed(cpuException)
                         throw combined
+                    }
+                } else {
+                    try {
+                        gpuProbe.markNpuInitStarted()
+                        loadWithBackend(modelPath, Backend.NPU(), "NPU", onLoaded)
+                        gpuProbe.markNpuInitSucceeded()
+                        "NPU" to null
+                    } catch (npuException: Throwable) {
+                        gpuProbe.markNpuInitSucceeded() // Clear pending — not a SIGSEGV
+                        Log.w(TAG, "[FALLBACK] NPU failed (Java exception: ${npuException::class.simpleName}), falling back to CPU", npuException)
+                        try {
+                            loadWithBackend(modelPath, Backend.CPU(cpuThreads), "CPU", onLoaded)
+                            "CPU" to npuException
+                        } catch (cpuException: Throwable) {
+                            Log.e(TAG, "[FALLBACK] Both NPU and CPU failed for $modelPath")
+                            val combined = RuntimeException(
+                                "All backends failed. NPU: ${npuException.message}, CPU: ${cpuException.message}"
+                            )
+                            combined.addSuppressed(npuException)
+                            combined.addSuppressed(cpuException)
+                            throw combined
+                        }
                     }
                 }
             }
@@ -266,35 +340,62 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         return backendName
     }
 
-
-    fun stopGeneration() {
-        currentGenerationJob?.cancel()
-        Log.d("LlmInferenceManager", "Generation stopped by user/system.")
-    }
-
-    // ── Orchestrator Inference (Synchronous) ─────────────────────────────────
-    fun generateOrchestratorResponse(prompt: String): String = runBlocking {
-        orchestratorMutex.withLock {
-            val eng = orchestratorEngine ?: throw java.lang.IllegalStateException("Orchestrator Engine not loaded")
-            // Always reset conversation for orchestrator to avoid context creep
-            orchestratorConversation?.close()
-            val freshConv = eng.createConversation()
-            orchestratorConversation = freshConv
-            
-            return@runBlocking freshConv.sendMessage(prompt).toString()
+    // ── Safe resource cleanup helpers ────────────────────────────────────────
+    // FIX(BUG 4): Always close Conversation before Engine, wrapped in try-catch
+    // to prevent cascading failures if one close() throws.
+    
+    private fun safeCloseConversation(conversation: Conversation?, label: String) {
+        try {
+            conversation?.close()
+        } catch (e: Throwable) {
+            Log.w(TAG, "Error closing $label conversation (non-fatal): ${e.message}")
         }
     }
 
+    private fun safeCloseEngine(engine: Engine?, label: String) {
+        try {
+            engine?.close()
+        } catch (e: Throwable) {
+            Log.w(TAG, "Error closing $label engine (non-fatal): ${e.message}")
+        }
+    }
+
+    fun stopGeneration() {
+        mainGenerationJob?.cancel()
+        orchestratorGenerationJob?.cancel()
+        Log.d("LlmInferenceManager", "Generation stopped by user/system.")
+    }
+
+    // ── Orchestrator Inference (Synchronous → Suspend) ───────────────────────
+    // FIX(BUG 6): Changed from `runBlocking` to `suspend fun`.
+    // `runBlocking` was blocking the 4-thread agentDispatcher pool in
+    // CognitiveTaskScheduler, risking deadlock during long inference calls.
+    suspend fun generateOrchestratorResponse(prompt: String): String {
+        return orchestratorMutex.withLock {
+            val eng = orchestratorEngine ?: throw java.lang.IllegalStateException("Orchestrator Engine not loaded")
+            // Always reset conversation for orchestrator to avoid context creep
+            safeCloseConversation(orchestratorConversation, "orchestrator")
+            val freshConv = eng.createConversation()
+            orchestratorConversation = freshConv
+            
+            // Run the blocking inference call on the dedicated orchestrator thread
+            withContext(orchestratorDispatcher) {
+                freshConv.sendMessage(prompt).toString()
+            }
+        }
+    }
+
+    // FIX(BUG 7): Uses separate `orchestratorGenerationJob` instead of shared `currentGenerationJob`
     fun generateOrchestratorResponseAsync(prompt: String, generationId: String) {
-        val oldJob = currentGenerationJob
-        currentGenerationJob = scope.launch(orchestratorDispatcher) {
+        val oldJob = orchestratorGenerationJob
+        orchestratorGenerationJob = scope.launch(orchestratorDispatcher) {
             try { oldJob?.cancelAndJoin() } catch (e: Exception) {}
             
             val freshConv = orchestratorMutex.withLock {
                 delay(200)
                 val eng = orchestratorEngine
                 if (eng != null) {
-                    orchestratorConversation?.close()
+                    safeCloseConversation(orchestratorConversation, "orchestrator")
                     orchestratorConversation = eng.createConversation()
                 }
                 orchestratorConversation
@@ -328,16 +429,17 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     }
 
     // ── Main Inference (Streaming Async) ─────────────────────────────────────
+    // FIX(BUG 7): Uses separate `mainGenerationJob` instead of shared `currentGenerationJob`
     fun generateMainResponseAsync(prompt: String, generationId: String) {
-        val oldJob = currentGenerationJob
-        currentGenerationJob = scope.launch(mainEngineDispatcher) {
+        val oldJob = mainGenerationJob
+        mainGenerationJob = scope.launch(mainEngineDispatcher) {
             try { oldJob?.cancelAndJoin() } catch (e: Exception) {}
             
             val freshConv = inferenceMutex.withLock {
                 delay(200)
                 val eng = mainEngine
                 if (eng != null) {
-                    mainConversation?.close()
+                    safeCloseConversation(mainConversation, "main")
                     mainConversation = eng.createConversation()
                 }
                 mainConversation
@@ -381,14 +483,17 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         }
     }
 
+    // FIX(BUG 4): Correct resource cleanup order — Conversation before Engine
     fun close() {
-        mainEngine?.close()
-        mainEngine = null
+        safeCloseConversation(mainConversation, "main")
         mainConversation = null
+        safeCloseEngine(mainEngine, "main")
+        mainEngine = null
         
-        orchestratorEngine?.close()
-        orchestratorEngine = null
+        safeCloseConversation(orchestratorConversation, "orchestrator")
         orchestratorConversation = null
+        safeCloseEngine(orchestratorEngine, "orchestrator")
+        orchestratorEngine = null
         
         scope.cancel()
     }

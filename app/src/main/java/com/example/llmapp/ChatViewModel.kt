@@ -808,7 +808,20 @@ class ChatViewModel : ViewModel() {
                         }
                     } catch (e: Throwable) {
                         Log.e("ChatViewModel", "Model loading failed", e)
-                        _uiState.update { it.copy(isLoadingModel = false, errorMessage = "Failed to load model: ${e.message}") }
+                        val fullStackTrace = buildString {
+                            appendLine(e::class.qualifiedName ?: e::class.simpleName)
+                            appendLine(e.message ?: "No message")
+                            appendLine()
+                            e.stackTrace.take(15).forEach { frame ->
+                                appendLine("  at $frame")
+                            }
+                            if (e.stackTrace.size > 15) appendLine("  ... (${e.stackTrace.size - 15} more frames)")
+                        }
+                        _uiState.update { it.copy(
+                            isLoadingModel = false, 
+                            errorMessage = "Failed to load model: ${e.message}",
+                            fatalErrorDetails = fullStackTrace
+                        ) }
                     }
                 }
             }
@@ -865,7 +878,7 @@ class ChatViewModel : ViewModel() {
     }
 
     fun clearModelError() {
-        _uiState.update { it.copy(errorMessage = null) }
+        _uiState.update { it.copy(errorMessage = null, fatalErrorDetails = null) }
     }
 
     fun clearFallbackWarning() {

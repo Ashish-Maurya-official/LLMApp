@@ -1,0 +1,302 @@
+﻿--------- beginning of main
+05-31 19:48:03.328  1491  1491 W android.hardware.power.stats-impl.oplus: PruneException: Unknown binder exception (2) pruned into EX_TRANSACTION_FAILED
+05-31 19:48:03.328  4516  9439 W midasd  : handleFactory read failed.
+05-31 19:48:03.328  6594 11495 I OplusObrain: OplusObrainClientInvoke.nativeGetTelephonyInfo
+05-31 19:48:03.332  6594 25216 I OplusObrain: OplusObrainClientInvoke.nativeGetTrafficTypeInfoForNetworkType networkType 0
+05-31 19:48:03.333  2248  2867 D KernelStatsHelper: getKernelStats start!
+05-31 19:48:03.333  2248  2764 D OplusNetlinkSocket: handleNetlinkRecvKernelMessage:nlmsghdr:StructNlMsgHdr{ nlmsg_len{2900}, nlmsg_type{55()}, nlmsg_flags{0()}, nlmsg_seq{0}, nlmsg_pid{147327692} }
+05-31 19:48:03.333  2248  2764 D KernelStatsHelper: get magic :[-1, -1, -1, 77, 65, 71, 73, 67]
+05-31 19:48:03.333  2248  2764 D KernelStatsHelper: magic matched count:55 data_len:2860
+05-31 19:48:03.333  2248  2764 D KernelStatsHelper: data over! check: true
+05-31 19:48:03.384  2248  9328 I AppSearchIcing: icing-search-engine.cc:2486: Persisting data to disk with mode 3
+05-31 19:48:03.391  1424  1480 E TetherController: property_get sys.radio.data.modem_share_flag return 0, 1!
+05-31 19:48:03.405  2248  2787 D OplusTetheringStatistician: get tethering traffic from mobile data, slotIndex: 0; entry: 0; rx bytes: 2070225969; tx bytes: 144619049
+05-31 19:48:03.409  2248  2787 D OplusTetheringNotification: showTrafficConsumptionNotification, id = 1, mNetworkDataType = 2, title = 1 device is connected to your mobile data hotspot.
+--------- beginning of system
+05-31 19:48:03.411  2248  2787 D NotificationService--OplusNotificationFixHelper: fixAppIcon: pkg=android
+05-31 19:48:03.411  2248  2787 D NotificationService--OplusNotificationFixHelper: fixAppIcon: appIcon = null, pkg = android
+05-31 19:48:03.411  2248  2787 D NotificationService--NotificationRecord: isSupportRearLight , isRearLight = false mLedRM = false isMultilLed = false
+05-31 19:48:03.411  1487  1502 I mtkpower@impl: [setMode] type:6, enabled:0
+05-31 19:48:03.411  1487  1502 E mtkpower@impl: [setMode] unknown type
+05-31 19:48:03.411  2248  2787 I OplusStatusBarManagerServiceEnhance:  getTopIsFullscreen mTopIsFullscreen: false
+05-31 19:48:03.412  2248  9328 I AppSearchIcing: icing-search-engine.cc:2501: PersistToDisk completed.
+05-31 19:48:03.413  2248  2248 D NotificationService--OplusNotificationManagerServiceExtImpl: isForwardToAssistants: false, case : Is in mMcsNotInterceptPkgList or is isSystemApp
+05-31 19:48:03.413  2248  2248 D NotificationService: This application enqueue notifications is not need postDelayed
+05-31 19:48:03.436  2935  2935 I SystemUi--Notification: OplusLiveAlertNotificationsRepository-->onRankingApplied
+05-31 19:48:03.442  2935  2935 I PluginSeedling--Track: RequestHandler-->notificationUpdated 0|android|0|null|1000 postTime: 1780237083411
+05-31 19:48:03.443  2935  2935 E LockScreenNotificationDispatcherImp: updateNotificationListOnKg size:4
+05-31 19:48:03.448  2935  2935 W SystemUi--Notification: OplusNotificationGroupExtImpl-->setChildrenExpanded: groupHeader is null
+05-31 19:48:03.451  2935  2935 I SystemUi--Notification: LockScreenNotificationDispatcherImp-->updateNotificationListOnKg resultCode: 1
+05-31 19:48:03.457  2935  2935 I SystemUi--Keyguard: KeyguardCapsuleContentView-->showNotificationCapsuleContent
+05-31 19:48:03.471  1487  1502 I mtkpower@impl: [setMode] type:6, enabled:1
+05-31 19:48:03.471  1487  1502 E mtkpower@impl: [setMode] unknown type
+05-31 19:48:03.476  2935  2935 D OplusNotificationDateTimeView: setTime mSettingTimeMillis 1780237083409, mSettingLocalDateTime 2026-05-31T19:48:00.409
+05-31 19:48:03.487  2935  2935 D OplusNotificationDateTimeView: setTime mSettingTimeMillis 1780237083409, mSettingLocalDateTime 2026-05-31T19:48:00.409
+05-31 19:48:03.493  1532  1532 I BufferQueueProducer: [[BBQ] 6b031cf#19109#19114](this:0xb400007c9eea0af8,id:-1,api:0,p:-1,c:1532) queueBuffer: fps=23.90 dur=1004.11 max=50.53 min=40.60
+05-31 19:48:03.498  2935  2935 D OplusNotificationDateTimeView: setTime mSettingTimeMillis 1780237083409, mSettingLocalDateTime 2026-05-31T19:48:00.409
+05-31 19:48:03.500  2935  2935 I SystemUi--Notification: OplusNotificationTempla-->resolveContentMargin: marginTop=112 isChildInGroup=false hasSubtitle=true params.topMargin=112
+05-31 19:48:03.503  2935  2935 W SystemUi--Notification: OplusNotificationGroupExtImpl-->setChildrenExpanded: groupHeader is null
+05-31 19:48:03.505  2935  2935 E LockScreenNotificationDispatcherImp: updateNotificationListOnKg size:4
+05-31 19:48:03.507  1468  1637 I OriginChannel: now system_time:106338202	pwm_rgb: system_time:106338003, lux:14, time_delta:100, pwm_turbo:0, bri:8, r:683, g:361, b:203, c:1194, algo:2, end:0, ts:106338001882869	
+05-31 19:48:03.507  2248  2545 I CwbClient: setCWBDisplayType set mFeatureID = CWB_RGB_VALUE
+05-31 19:48:03.507  2935  2935 W SystemUi--Notification: OplusNotificationGroupExtImpl-->setChildrenExpanded: groupHeader is null
+05-31 19:48:03.509  2935  2935 I SystemUi--Notification: LockScreenNotificationDispatcherImp-->updateNotificationListOnKg resultCode: 1
+05-31 19:48:03.512  2935  2935 I SystemUi--Keyguard: KeyguardCapsuleContentView-->showNotificationCapsuleContent
+05-31 19:48:03.524  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:03.524 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:03.525 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:03.525  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:03.526 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{c1dea5c com.example.llmapp}
+05-31 19:48:03.527 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:03.527 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:03.533  2248  3420 I OplusHansManager : uid=10339, pkg=app.revanced.android.youtube cannot transition from R to M, importance=fg-service
+05-31 19:48:03.560  1461  1522 D CwbService: RGB value: 73, 20, 14, hist:0, 0, 0,  rgb_state: 0
+05-31 19:48:03.612  2248  2568 V AlarmManager: sending alarm Alarm{587a9e0 type 1 origWhen 1780237083612 whenElapsed 106338307 android} uid 1000 whenElapsed 106338307 windowLength 0 maxWhenElapsed 106338307 repeatInterval 0 action null component null tag StorgaeBandInfoAlarmTag flags 0x9 procName system_server
+05-31 19:48:03.614  2248 14395 E OplusStorageUFSBandwidth: storage_io_metrics_path is /proc/oplus_storage/io_metrics/forever/
+05-31 19:48:03.622 14988 14988 D IHansComunication: HANS sendMessageToKernel: threadId = 516347423808, netLinkSetup = 1, type = FROZEN_TRANS, targetUid = 10433, pkgCmd = PKG_CMD_MAX
+05-31 19:48:03.623  2248 14395 E OplusStorageUFSBandwidth: Bandwidth - Read: 5.97 MB/s, Write: 0.00 MB/s
+05-31 19:48:03.623  2248 14395 E OplusStorageUFSBandwidth: Task time: 9ms
+05-31 19:48:03.624  2248 14395 E OplusStorageUFSBandwidth: Alarm set to trigger in 10 seconds
+05-31 19:48:03.647  2248  2787 I OplusWifiSarManager: Received Data State Change: 3
+05-31 19:48:03.647  3443  3443 D SubsysEventListenerManager-SubsysTelephonyCallback[0]: onDataActivity
+05-31 19:48:03.647  3443  3443 D DataService[0]: onDataActivity direction:3
+05-31 19:48:03.648  2935  2935 D Tile.OplusCellularTile: refreshState: tile not listening, ignore
+05-31 19:48:03.649  2935  3107 I SystemUi--Statusbar: MobileConnectionRepositoryImpl-->subId:1 isSoftSimCard:false slotId:0
+05-31 19:48:03.661  1487  1502 I mtkpower@impl: [setMode] type:6, enabled:0
+05-31 19:48:03.661  1487  1502 E mtkpower@impl: [setMode] unknown type
+05-31 19:48:03.665  1461  1522 D CwbService: RGB value: 73, 20, 14, hist:0, 0, 0,  rgb_state: 0
+05-31 19:48:03.670  1487  1502 I mtkpower@impl: [setMode] type:6, enabled:1
+05-31 19:48:03.670  1487  1502 E mtkpower@impl: [setMode] unknown type
+05-31 19:48:03.707  1468  1637 I OriginChannel: now system_time:106338402	pwm_rgb: system_time:106338202, lux:14, time_delta:100, pwm_turbo:0, bri:8, r:702, g:361, b:203, c:1194, algo:2, end:0, ts:106338201896522	
+05-31 19:48:03.708  2248  2545 D FusionLightNextGen: raw_lux -1.0, raw_cct -1.0, r/g/b/c: 683.0/361.0/203.0/1194.0, R/G/B: 73.0/20.0/14.0, bri 8.0, lux: 8.463699, cct: 5300.0, ir: 0.022212, conf: 2, cnt: 0
+05-31 19:48:03.732  1849  2288 W OPLUS_LOG_LOAD: ==LOGS PROG INFO, prog(camerahalserver) ==
+05-31 19:48:03.732  1849  2288 D ULogGuard: Monitoring: 21 threads, 0 requests, 0 time-bombs; 72 guards. ResetFlags = 0x7
+05-31 19:48:03.746  1532  1532 I BufferQueueProducer: [FramebufferSurface](this:0xb400007cb6d64ef0,id:-1,api:1,p:1532,c:1532) queueBuffer: fps=29.84 dur=1005.51 max=52.24 min=6.99
+05-31 19:48:03.806 27927 28818 W OplusFeedbackInfo: 0xb40000701b615d00 c2.mtk.avc.decoder codec[0xb40000700b34b800] 464x832 inputFps=23 outputFps=24 renderFps=24, discardFps=0
+05-31 19:48:03.813  2248  3420 I OplusHansManager : uid=10346, pkg=com.instagram.android F enter(), M stay=10
+05-31 19:48:03.816  3343  3343 W Settings: Setting airplane_mode_on has moved from android.provider.Settings.System to android.provider.Settings.Global, returning read-only value.
+05-31 19:48:03.825  3343  3343 D OplusTelephonyController: onSignalStrengthChanged: SignalStrength=SignalStrength:{mCdma=CellSignalStrengthCdma: cdmaDbm=2147483647 cdmaEcio=2147483647 evdoDbm=2147483647 evdoEcio=2147483647 evdoSnr=2147483647 level=0,mGsm=CellSignalStrengthGsm: rssi=2147483647 ber=2147483647 mTa=2147483647 mLevel=0,mWcdma=CellSignalStrengthWcdma: ss=2147483647 ber=2147483647 rscp=2147483647 ecno=2147483647 level=0,mTdscdma=CellSignalStrengthTdscdma: rssi=2147483647 ber=2147483647 rscp=2147483647 level=0,mLte=CellSignalStrengthLte: rssi=2147483647 rsrp=2147483647 rsrq=2147483647 rssnr=2147483647 cqiTableIndex=2147483647 cqi=2147483647 ta=2147483647 level=0 parametersUseForLevel=0,mNr=CellSignalStrengthNr:{ csiRsrp = 2147483647 csiRsrq = 2147483647 csiCqiTableIndex = 2 csiCqiReport = [10] ssRsrp = -96 ssRsrq = -11 ssSinr = 20 level = 1 parametersUseForLevel = 0 timingAdvance = 0 },primary=CellSignalStrengthNr}
+05-31 19:48:03.826  2935  2935 D Tile.OplusCellularTile: refreshState: tile not listening, ignore
+05-31 19:48:03.827 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:03.827  2935  3107 I SystemUi--Statusbar: MobileConnectionRepositoryImpl-->subId:1 isSoftSimCard:false slotId:0
+05-31 19:48:03.827  1487  1502 I mtkpower@impl: [setMode] type:6, enabled:0
+05-31 19:48:03.827  1487  1502 E mtkpower@impl: [setMode] unknown type
+05-31 19:48:03.829  2248  3904 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:03.831  2248  3420 I OplusHansManager : freeze uid: 10346 com.instagram.android pids: [28033, 30615, 27927, 30637, 30667] IsolatedUid: [90000, 90001] scene: LcdOn
+05-31 19:48:03.831  2248  3460 I OplusHansManager : p_BC uid=10346 pkg=com.instagram.android
+05-31 19:48:03.832  2248  4401 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10346, state to em, mForegroundCnt = 0, isFg = false
+05-31 19:48:03.832  2248  3460 I OplusBinderProxy: proxyBinder uid: 10346 pkg: com.instagram.android proxy: true calling: OFreezer
+05-31 19:48:03.832  2248  3460 I LocationFreezeProc: will freezeLocationProcess for com.instagram.android, 10346, true, false
+05-31 19:48:03.832  2248  3460 I LocationFreezeProc: Executing freeze operation for com.instagram.android, 10346, true, false
+05-31 19:48:03.832  2248  3460 W LocationFreezeProc: Do nothing for the app is not record!
+05-31 19:48:03.832 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:03.832  2248  3460 I OplusHansManager : p_gps: uid 10346 result false
+05-31 19:48:03.832  2248  3460 W OplusHansManager : Failed to notify phone app uid : not register
+05-31 19:48:03.832  3443  3443 D SubsysEventListenerManager-SubsysTelephonyCallback[0]: onSignalStrengthsChanged
+05-31 19:48:03.833 14988 14988 D IHansComunication: HANS sendMessageToKernel: threadId = 516347423808, netLinkSetup = 1, type = PKG, targetUid = 10346, pkgCmd = ADD_ONE_UID
+05-31 19:48:03.833  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:03.833 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{54d0165 com.example.llmapp}
+05-31 19:48:03.833 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:03.833 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:03.844  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:03.867  4528  4594 I [UAH_CLIENT]: Uah_fetch_dataset enter
+05-31 19:48:03.869  4528  4594 E [UAH_CLIENT]: failed to get resource value
+05-31 19:48:03.891 29977 29977 D sysapi-LongBgTaskQuotaManager: [remove]  count = 1, requestId = 1231, hadRequested = false , BaseConditionManager.refreshAppStateAction run
+05-31 19:48:03.894  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:03.894  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:03.894 29977 29977 D sysapi-LongBgTaskQuotaManager: [remove]  stopBackgroundRunning
+05-31 19:48:03.897  2248  2867 I OplusStatusBarManagerServiceEnhance:  getTopIsFullscreen mTopIsFullscreen: false
+05-31 19:48:03.897 29977 30330 D sysapi-LongBgTaskQuotaManager: [add]     count = 0, requestId = -1, hadRequested = false , BaseConditionManager.refreshAppState post delayed
+05-31 19:48:03.898 29977 30330 D sysapi-LongBgTaskQuotaManager: [add]     startBackgroundRunning
+05-31 19:48:03.900 29977 29993 D sysapi-LongBgTaskQuotaManager: [requestRunningTaskInfo]  requestId: 1232 -> -1, resultCode: 10000
+05-31 19:48:03.907  1468  1637 I OriginChannel: now system_time:106338603	pwm_rgb: system_time:106338402, lux:14, time_delta:100, pwm_turbo:0, bri:8, r:683, g:361, b:203, c:1194, algo:2, end:0, ts:106338401883855	
+05-31 19:48:03.908  2248  2545 I CwbClient: setCWBDisplayType set mFeatureID = CWB_RGB_VALUE
+05-31 19:48:03.943  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:03.964  1461  1522 D CwbService: RGB value: 73, 20, 14, hist:0, 0, 0,  rgb_state: 0
+05-31 19:48:03.993  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.043  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.050  4289  4289 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.common.telemetry.service.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentApiService mCallingUid=10293 }
+05-31 19:48:04.093  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.107  1468  1637 I OriginChannel: now system_time:106338802	pwm_rgb: system_time:106338603, lux:14, time_delta:100, pwm_turbo:0, bri:8, r:702, g:361, b:203, c:1194, algo:2, end:0, ts:106338601889080	
+05-31 19:48:04.108  2248  2545 D FusionLightNextGen: raw_lux -1.0, raw_cct -1.0, r/g/b/c: 702.0/361.0/220.0/1213.0, R/G/B: 73.0/20.0/14.0, bri 8.0, lux: 8.597288, cct: 5300.0, ir: 0.028948, conf: 2, cnt: 0
+05-31 19:48:04.110  1878  2619 D AALLightSensor: oldLux=8 [SA:-1 LA:-1] newLux=8 (oriLux: 8)
+05-31 19:48:04.136 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:04.138  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:04.141 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:04.143  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.143  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:04.147 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{1548e3a com.example.llmapp}
+05-31 19:48:04.147 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:04.147 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:04.149  2248  2787 D OplusWifiSarManager: wifisarprop msg=11110000001110000 sar_idx=11110000001110000
+05-31 19:48:04.193  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.243  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.274  1465  1465 D healthd : system healthd: battery l=30 v=3 t=36.1 h=2 st=2 c=-67 fc=6000000 cc=37 chg=u
+05-31 19:48:04.288  1505  1505 D ChargerInfo: getInfo: type: 0x1, update: 1
+05-31 19:48:04.289  1505  1552 D ChargerInfo: chargerInfoUpdateThread: update start
+05-31 19:48:04.291  1505  1552 D ChargerInfo: enableTx: path(/proc/wireless/enable_tx): not exist
+05-31 19:48:04.291  1505  1552 D ChargerInfo: wlsAdapterPower: path(/sys/class/oplus_chg/wireless/max_w_power): not exist
+05-31 19:48:04.291  1505  1552 D ChargerInfo: unknown: path(/sys/class/oplus_chg/ac/online) and backupPath(/sys/class/power_supply/ac/online) not exist
+05-31 19:48:04.292  1505  1552 D ChargerInfo: unknown: path(/sys/class/oplus_chg/ac/online) and backupPath(/sys/class/power_supply/ac/online) not exist
+05-31 19:48:04.292  1505  1552 D ChargerInfo: get_ui_charge_icon_type: [0 0] [0 0] 1
+05-31 19:48:04.292  1505  1552 D ChargerInfo: unknown: path(/sys/class/oplus_chg/ac/online) and backupPath(/sys/class/power_supply/ac/online) not exist
+05-31 19:48:04.293  1505  1552 D ChargerInfo: unknown: path(/sys/class/oplus_chg/ac/online) and backupPath(/sys/class/power_supply/ac/online) not exist
+05-31 19:48:04.293  1505  1552 E ChargerInfo: SingleHyperPath not found
+05-31 19:48:04.293  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.293  1505  1552 D ChargerInfo: chargerInfoUpdateThread: update end
+05-31 19:48:04.293  1505  1552 D ChargerInfo: chargerInfoUpdateThread: update wait
+05-31 19:48:04.294  1505  1505 D ChargerInfo: enableTx: path(/proc/wireless/enable_tx): not exist
+05-31 19:48:04.294  1505  1505 D ChargerInfo: wlsAdapterPower: path(/sys/class/oplus_chg/wireless/max_w_power): not exist
+05-31 19:48:04.294  1505  1505 D ChargerInfo: getInfo: {"Update":{"batteryFcc":5706,"batteryRm":1683,"bddLeakCurr":0,"bmsStatus":0,"bypassChgStatus":2,"chargeTimeRemaining":0,"cpaPower":2,"enableTx":true,"fastCharge":0,"isSupportSpeedCharge":0,"notifyCode":0,"otgOnline":1,"ppsChargePower":0,"ppsCharging":0,"shortCHwStatus":0,"shortIcOtpStatus":0,"uiIconType":0,"uiPower":0,"usbStatus":0,"wlsAdapterPower":0}}
+05-31 19:48:04.298  2248  2343 D BatteryStatsImplExtImpl: mActiveProcesses size = 45
+05-31 19:48:04.298  2248  2343 D BatteryStatsImplExtImpl: rpmhStats is null or interval time is too short.
+05-31 19:48:04.307  1468  1637 I OriginChannel: now system_time:106339002	pwm_rgb: system_time:106338802, lux:14, time_delta:100, pwm_turbo:0, bri:8, r:702, g:361, b:220, c:1213, algo:2, end:0, ts:106338801463527	
+05-31 19:48:04.307  2248  2545 I CwbClient: setCWBDisplayType set mFeatureID = CWB_RGB_VALUE
+05-31 19:48:04.342  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.392  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.442  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.447 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:04.452  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:04.454 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:04.455  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:04.457 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{f326aeb com.example.llmapp}
+05-31 19:48:04.457 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:04.457 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:04.492  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.494  3443  3443 D SubsysEventListenerManager-SubsysTelephonyCallback[0]: onSignalStrengthsChanged
+05-31 19:48:04.495  2248  2867 I OplusBinderProxy: pb uid: 10346 pid: 27927 desc: com.android.internal.telephony.IPhoneStateListener/10
+05-31 19:48:04.495  2248  2867 I OplusBinderProxy: pb uid: 10346 pid: 27927 desc: com.android.internal.telephony.IPhoneStateListener/10
+05-31 19:48:04.495  2935  2935 D Tile.OplusCellularTile: refreshState: tile not listening, ignore
+05-31 19:48:04.496  2248  2867 I OplusBinderProxy: pb uid: 10346 pid: 27927 desc: com.android.internal.telephony.IPhoneStateListener/10
+05-31 19:48:04.496  2248  2867 I OplusBinderProxy: pb uid: 10346 pid: 27927 desc: com.android.internal.telephony.IPhoneStateListener/10
+05-31 19:48:04.497  3343  3343 D OplusTelephonyController: onSignalStrengthChanged: SignalStrength=SignalStrength:{mCdma=CellSignalStrengthCdma: cdmaDbm=2147483647 cdmaEcio=2147483647 evdoDbm=2147483647 evdoEcio=2147483647 evdoSnr=2147483647 level=0,mGsm=CellSignalStrengthGsm: rssi=2147483647 ber=2147483647 mTa=2147483647 mLevel=0,mWcdma=CellSignalStrengthWcdma: ss=2147483647 ber=2147483647 rscp=2147483647 ecno=2147483647 level=0,mTdscdma=CellSignalStrengthTdscdma: rssi=2147483647 ber=2147483647 rscp=2147483647 level=0,mLte=CellSignalStrengthLte: rssi=2147483647 rsrp=2147483647 rsrq=2147483647 rssnr=2147483647 cqiTableIndex=2147483647 cqi=2147483647 ta=2147483647 level=0 parametersUseForLevel=0,mNr=CellSignalStrengthNr:{ csiRsrp = 2147483647 csiRsrq = 2147483647 csiCqiTableIndex = 2147483647 csiCqiReport = [8] ssRsrp = -96 ssRsrq = -11 ssSinr = 23 level = 1 parametersUseForLevel = 0 timingAdvance = 0 },primary=CellSignalStrengthNr}
+05-31 19:48:04.503  2935  3107 I SystemUi--Statusbar: MobileConnectionRepositoryImpl-->subId:1 isSoftSimCard:false slotId:0
+05-31 19:48:04.507  1468  1637 I OriginChannel: now system_time:106339202	pwm_rgb: system_time:106339002, lux:14, time_delta:100, pwm_turbo:0, bri:8, r:720, g:378, b:220, c:1232, algo:2, end:0, ts:106339001966017	
+05-31 19:48:04.508  2248  2545 D FusionLightNextGen: raw_lux -1.0, raw_cct -1.0, r/g/b/c: 702.0/361.0/220.0/1213.0, R/G/B: 73.0/20.0/14.0, bri 8.0, lux: 8.597288, cct: 5300.0, ir: 0.028948, conf: 2, cnt: 0
+05-31 19:48:04.511  2248  4416 I AICCTModule: SensorFilter: findSecondNearestValue, sensorValue: 5300.0 nearestMaxValue:5300.0 secondNearestValue: 5300.0
+05-31 19:48:04.511  2248  4416 I AICCTModule: SensorFilter: findSecondNearestValue, sensorValue: 9.861314 nearestMaxValue:9.581142 secondNearestValue: 9.296973
+05-31 19:48:04.543  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.593  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.643  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.657 21835 21835 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.common.BIND_SHARED_PREFS xflg=0x4 pkg=com.google.android.gms mCallingUid=10122 }
+05-31 19:48:04.692  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.707  1468  1637 I OriginChannel: now system_time:106339403	pwm_rgb: system_time:106339202, lux:14, time_delta:100, pwm_turbo:0, bri:8, r:702, g:361, b:220, c:1213, algo:2, end:0, ts:106339201970392	
+05-31 19:48:04.708  2248  2545 I CwbClient: setCWBDisplayType set mFeatureID = CWB_RGB_VALUE
+05-31 19:48:04.742  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.756 29013 29066 I APS_ALOG: flushRoutine g_immediateFlush=0 g_pendingCount=0 g_oobCount=0
+05-31 19:48:04.759 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:04.760  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:04.763 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:04.765  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:04.768 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{1cd5048 com.example.llmapp}
+05-31 19:48:04.768 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:04.768 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:04.792  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.835 14988 14988 D IHansComunication: HANS sendMessageToKernel: threadId = 516347423808, netLinkSetup = 1, type = FROZEN_TRANS, targetUid = 10346, pkgCmd = PKG_CMD_MAX
+05-31 19:48:04.842  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.842  1466 28831 D C2MtkBufferManager: over 500ms not request from VCodec, stop BM fetch thread
+05-31 19:48:04.842  1466 28831 D C2MtkVdec: [0xB40000757BA0E800] NotifyEventFromBufferManager: event 0
+05-31 19:48:04.868  4528  4594 I [UAH_CLIENT]: Uah_fetch_dataset enter
+05-31 19:48:04.869  4528  4594 E [UAH_CLIENT]: failed to get resource value
+05-31 19:48:04.902  1466 28831 W C2MtkBufferManager: [0xB40000757BA3C120] fetchNewBlock: wait fence 0x0xb40000757bab80b0 failed. ret 110
+05-31 19:48:04.902  1466 28831 D C2MtkBufferManager: over 500ms not request from VCodec, stop BM fetch thread
+05-31 19:48:04.902  1466 28831 D C2MtkVdec: [0xB40000757BA0E800] NotifyEventFromBufferManager: event 0
+05-31 19:48:04.907  1468  1637 I OriginChannel: now system_time:106339603	pwm_rgb: system_time:106339403, lux:15, time_delta:100, pwm_turbo:0, bri:8, r:720, g:378, b:220, c:1269, algo:2, end:0, ts:106339401977133	
+05-31 19:48:04.908  2248  2545 D FusionLightNextGen: raw_lux -1.0, raw_cct -1.0, r/g/b/c: 720.0/378.0/220.0/1269.0, R/G/B: 73.0/20.0/14.0, bri 8.0, lux: 8.986779, cct: 5300.0, ir: 0.019292, conf: 2, cnt: 0
+05-31 19:48:05.070 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:05.071  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:05.075 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:05.077  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:05.079 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{2914ee1 com.example.llmapp}
+05-31 19:48:05.079 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:05.080 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:05.107  1468  1637 I OriginChannel: now system_time:106339803	pwm_rgb: system_time:106339603, lux:15, time_delta:100, pwm_turbo:0, bri:8, r:720, g:378, b:220, c:1269, algo:2, end:0, ts:106339601997633	
+05-31 19:48:05.108  2248  2545 I CwbClient: setCWBDisplayType set mFeatureID = CWB_RGB_VALUE
+05-31 19:48:05.307  1468  1637 I OriginChannel: pwm_cct: lux:3807, time_delta:100, pwm_turbo:0, bri:8, r:757, g:395, b:220, c:1307
+05-31 19:48:05.308  1468  1637 I OriginChannel: now system_time:106340003	pwm_rgb: system_time:106339803, lux:15, time_delta:100, pwm_turbo:0, bri:8, r:739, g:378, b:220, c:1288, algo:2, end:0, ts:106339801902859	
+05-31 19:48:05.308  2248  2545 D FusionLightNextGen: raw_lux -1.0, raw_cct -1.0, r/g/b/c: 757.0/395.0/220.0/1307.0, R/G/B: 73.0/20.0/14.0, bri 8.0, lux: 9.259695, cct: 5300.0, ir: 0.024911, conf: 2, cnt: 0
+05-31 19:48:05.343  3443  4052 D MtkRadioService: getRRCStatus
+05-31 19:48:05.344  3443  4052 D RadioProxyJ[0]: [11090]> getRRCStatus
+05-31 19:48:05.353  1754  1851 D MipcProxy: handleMessage msg is 4001, instance 0
+05-31 19:48:05.353  1754  1851 D RadioProxy: getRRCStatus : response cb for instance 0
+05-31 19:48:05.355  3443 25374 D RadioProxyJ[0]: [11090]< getRRCStatusResponse 1
+05-31 19:48:05.355  3443  4052 D CoexRfService: report RRC state:true
+05-31 19:48:05.380 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:05.382  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:05.385 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:05.387  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:05.390 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{ed5406 com.example.llmapp}
+05-31 19:48:05.391 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:05.391 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:05.507  1468  1637 I OriginChannel: now system_time:106340203	pwm_rgb: system_time:106340003, lux:15, time_delta:100, pwm_turbo:0, bri:8, r:757, g:395, b:220, c:1307, algo:2, end:0, ts:106340001877003	
+05-31 19:48:05.509  2248  2545 I CwbClient: setCWBDisplayType set mFeatureID = CWB_RGB_VALUE
+05-31 19:48:05.516  1505  1590 D vendor.oplus.hardware.charger-V10-service: ret_value:124, read content:,361,365,3808,3808,-182,30,30,1,1,0,415,4900,30,1,4470,600,500,0,3,-22,3,0,1,0,2,0,0,0,1,57064,100,0,1683,5706,0,0,0,0,0,75
+05-31 19:48:05.517  1505  1590 D vendor.oplus.hardware.charger-V10-service: gmtime: 2026-05-31-19-48-05
+05-31 19:48:05.518  1505  1590 D vendor.oplus.hardware.charger-V10-service: usb_online:1, ac_online:-2147483648, wireless_online:-2147483648
+05-31 19:48:05.625  2248  2568 V AlarmManager: sending alarm Alarm{9df160d type 1 origWhen 1780237085623 whenElapsed 106340319 android} uid 1000 whenElapsed 106340319 windowLength 0 maxWhenElapsed 106340319 repeatInterval 0 action null component null tag StorgaeBandInfoAlarmTag flags 0x9 procName system_server
+05-31 19:48:05.627  2248 14395 E OplusStorageUFSBandwidth: storage_io_metrics_path is /proc/oplus_storage/io_metrics/forever/
+05-31 19:48:05.631  2248 14395 E OplusStorageUFSBandwidth: Bandwidth - Read: 12.46 MB/s, Write: 0.00 MB/s
+05-31 19:48:05.631  2248 14395 E OplusStorageUFSBandwidth: Task time: 5ms
+05-31 19:48:05.637  2248 14395 E OplusStorageUFSBandwidth: Alarm set to trigger in 10 seconds
+05-31 19:48:05.692 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:05.693  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:05.696 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:05.697  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:05.698 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{74acac7 com.example.llmapp}
+05-31 19:48:05.699 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:05.699 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:05.707  1468  1637 I OriginChannel: now system_time:106340403	pwm_rgb: system_time:106340203, lux:15, time_delta:100, pwm_turbo:0, bri:8, r:739, g:395, b:220, c:1288, algo:2, end:0, ts:106340201895541	
+05-31 19:48:05.709  2248  2545 D FusionLightNextGen: raw_lux -1.0, raw_cct -1.0, r/g/b/c: 757.0/395.0/237.0/1325.0, R/G/B: 73.0/20.0/14.0, bri 8.0, lux: 9.400539, cct: 5300.0, ir: 0.024187, conf: 2, cnt: 0
+05-31 19:48:05.907  1468  1637 I OriginChannel: now system_time:106340603	pwm_rgb: system_time:106340403, lux:15, time_delta:100, pwm_turbo:0, bri:8, r:757, g:395, b:237, c:1325, algo:2, end:0, ts:106340401878234	
+05-31 19:48:05.908  2248  2545 I CwbClient: setCWBDisplayType set mFeatureID = CWB_RGB_VALUE
+05-31 19:48:05.910  1878  2619 D AALService: [CRTC_115] onALIChanged: 8 -> 9
+05-31 19:48:05.910  1878  2619 D AALService: onALIChanged skip ali evnet since dre off
+05-31 19:48:06.000 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:06.002  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:06.005 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:06.007  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:06.010 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{18b28f4 com.example.llmapp}
+05-31 19:48:06.011 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:06.011 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:06.107  1468  1637 I OriginChannel: now system_time:106340802	pwm_rgb: system_time:106340603, lux:16, time_delta:100, pwm_turbo:0, bri:8, r:776, g:413, b:237, c:1344, algo:2, end:0, ts:106340601883767	
+05-31 19:48:06.108  2248  2545 D FusionLightNextGen: raw_lux -1.0, raw_cct -1.0, r/g/b/c: 776.0/413.0/237.0/1363.0, R/G/B: 73.0/20.0/14.0, bri 8.0, lux: 9.690462, cct: 5300.0, ir: 0.023136, conf: 2, cnt: 0
+05-31 19:48:06.226  5223  5826 D gaia-GaiaConnectChecker: start connect check++
+05-31 19:48:06.307  1468  1637 I OriginChannel: now system_time:106341003	pwm_rgb: system_time:106340802, lux:16, time_delta:100, pwm_turbo:0, bri:8, r:776, g:413, b:237, c:1363, algo:2, end:0, ts:106340801902243	
+05-31 19:48:06.308  2248  2545 I CwbClient: setCWBDisplayType set mFeatureID = CWB_RGB_VALUE
+05-31 19:48:06.311 16611 16646 D SmartSidebar.EdgePanelSettingsValueProxy: (main)getOverlayShowVideoAssistant edge_panel_video_assistant =-1
+05-31 19:48:06.313  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:06.317 16611 16611 D VideoAssistantUtils: isInSplitScreenMode  === :false
+05-31 19:48:06.319  2248  2867 D FlexibleTaskController: check task which not have enough child, isInSingleWhiteList:false isCloneTask:false
+05-31 19:48:06.321 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopAppInfo() result: ApplicationInfo{f72f81d com.example.llmapp}
+05-31 19:48:06.321 16611 16646 D SmartSidebar.EdgePanelUtils: (main)getTopPkg() pkg: com.*****.llmapp
+05-31 19:48:06.322 16611 16646 D SmartSidebar.VideoAssistantAppStatusManager: (main)isAppEnabled: com.example.llmapp = true
+05-31 19:48:06.428  1424  1480 E TetherController: property_get sys.radio.data.modem_share_flag return 0, 1!
+05-31 19:48:06.446  2248  2679 W NetworkPolicy: shared quota unsupported; generating rule for each iface
+05-31 19:48:06.451  2248  2787 D OplusTetheringStatistician: get tethering traffic from mobile data, slotIndex: 0; entry: 0; rx bytes: 2070313232; tx bytes: 144625718
+05-31 19:48:06.460  2248  2787 D OplusTetheringNotification: showTrafficConsumptionNotification, id = 1, mNetworkDataType = 2, title = 1 device is connected to your mobile data hotspot.
+05-31 19:48:06.463  2248  2787 D NotificationService--OplusNotificationFixHelper: fixAppIcon: pkg=android
+05-31 19:48:06.463  2248  2787 D NotificationService--OplusNotificationFixHelper: fixAppIcon: appIcon = null, pkg = android
+05-31 19:48:06.463  2248  2787 D NotificationService--NotificationRecord: isSupportRearLight , isRearLight = false mLedRM = false isMultilLed = false
+05-31 19:48:06.463  2248  2787 I OplusStatusBarManagerServiceEnhance:  getTopIsFullscreen mTopIsFullscreen: false
+05-31 19:48:06.464  2248  2248 D NotificationService--OplusNotificationManagerServiceExtImpl: isForwardToAssistants: false, case : Is in mMcsNotInterceptPkgList or is isSystemApp
+05-31 19:48:06.468  2248  2248 D NotificationService: This application enqueue notifications is not need postDelayed
+05-31 19:48:06.502  2935  2935 I SystemUi--Notification: OplusLiveAlertNotificationsRepository-->onRankingApplied
+05-31 19:48:06.507  1468  1637 I OriginChannel: now system_time:106341202	pwm_rgb: system_time:106341003, lux:16, time_delta:100, pwm_turbo:0, bri:8, r:776, g:413, b:237, c:1363, algo:2, end:0, ts:106341001883537	
+05-31 19:48:06.508  2248  2545 D FusionLightNextGen: raw_lux -1.0, raw_cct -1.0, r/g/b/c: 794.0/413.0/254.0/1381.0, R/G/B: 73.0/20.0/14.0, bri 8.0, lux: 9.818982, cct: 5300.0, ir: 0.029048, conf: 2, cnt: 0
+05-31 19:48:06.513  2935  2935 I PluginSeedling--Track: RequestHandler-->notificationUpdated 0|android|0|null|1000 postTime: 1780237086463
+05-31 19:48:06.513  2935  2935 E LockScreenNotificationDispatcherImp: updateNotificationListOnKg size:4
+05-31 19:48:06.517  2935  2935 W SystemUi--Notification: OplusNotificationGroupExtImpl-->setChildrenExpanded: groupHeader is null
+05-31 19:48:06.520  2935  2935 I SystemUi--Notification: LockScreenNotificationDispatcherImp-->updateNotificationListOnKg resultCode: 1
+05-31 19:48:06.526  2935  2935 I SystemUi--Keyguard: KeyguardCapsuleContentView-->showNotificationCapsuleContent
+05-31 19:48:06.532  1532  1532 I BufferQueueProducer: [NotificationShade#19869](this:0xb400007ccf70a2f8,id:-1,api:0,p:-1,c:1532) queueBuffer: fps=1.84 dur=3263.45 max=2865.45 min=7.88
+05-31 19:48:06.536  1487  1502 I mtkpower@impl: [setMode] type:6, enabled:1
+05-31 19:48:06.536  1487  1502 E mtkpower@impl: [setMode] unknown type
+05-31 19:48:06.537  1532  1532 I BufferQueueProducer: [FramebufferSurface](this:0xb400007cb6d64ef0,id:-1,api:1,p:1532,c:1532) queueBuffer: fps=1.43 dur=2791.30 max=2666.77 min=39.43
+05-31 19:48:06.538  2935  2935 D OplusNotificationDateTimeView: setTime mSettingTimeMillis 1780237086460, mSettingLocalDateTime 2026-05-31T19:48:00.460
+05-31 19:48:06.551  2935  2935 D OplusNotificationDateTimeView: setTime mSettingTimeMillis 1780237086460, mSettingLocalDateTime 2026-05-31T19:48:00.460
+05-31 19:48:06.558  2935  2935 D OplusNotificationDateTimeView: setTime mSettingTimeMillis 1780237086460, mSettingLocalDateTime 2026-05-31T19:48:00.460
+05-31 19:48:06.559  2935  2935 I SystemUi--Notification: OplusNotificationTempla-->resolveContentMargin: marginTop=112 isChildInGroup=false hasSubtitle=true params.topMargin=112
+05-31 19:48:06.562  2935  2935 W SystemUi--Notification: OplusNotificationGroupExtImpl-->setChildrenExpanded: groupHeader is null
+05-31 19:48:06.563  2935  2935 E LockScreenNotificationDispatcherImp: updateNotificationListOnKg size:4
+05-31 19:48:06.567  2935  2935 W SystemUi--Notification: OplusNotificationGroupExtImpl-->setChildrenExpanded: groupHeader is null
+05-31 19:48:06.568  2935  2935 I SystemUi--Notification: LockScreenNotificationDispatcherImp-->updateNotificationListOnKg resultCode: 1

@@ -278,7 +278,8 @@ class MainActivity : ComponentActivity() {
                                     loadError = uiState.errorMessage,
                                     loadStatus = uiState.status,
                                     fallbackWarning = uiState.fallbackMessage,
-                                    fallbackErrorDetails = uiState.fallbackErrorDetails
+                                    fallbackErrorDetails = uiState.fallbackErrorDetails,
+                                    fatalErrorDetails = uiState.fatalErrorDetails
                                 )
                             }
                             composable("evaluation") {

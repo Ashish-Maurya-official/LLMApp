@@ -57,7 +57,8 @@ fun ModelScreen(
     loadError: String? = null,
     loadStatus: String = "Ready",
     fallbackWarning: String? = null,
-    fallbackErrorDetails: String? = null
+    fallbackErrorDetails: String? = null,
+    fatalErrorDetails: String? = null
 ) {
     val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
@@ -141,9 +142,12 @@ fun ModelScreen(
 
     // ── Error Dialog ────────────────────────────────────────────────────────
     if (showErrorDialog && lastError != null) {
+        var fatalErrorExpanded by remember { mutableStateOf(false) }
+
         AlertDialog(
             onDismissRequest = {
                 showErrorDialog = false
+                fatalErrorExpanded = false
                 onClearError()
             },
             icon = {
@@ -160,14 +164,100 @@ fun ModelScreen(
                 )
             },
             text = {
-                Text(
-                    lastError ?: "Unknown error occurred",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Column {
+                    Text(
+                        lastError ?: "Unknown error occurred",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    if (!fatalErrorDetails.isNullOrBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Surface(
+                            onClick = { fatalErrorExpanded = !fatalErrorExpanded },
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (fatalErrorExpanded) "Hide Error Details" else "Show Error Details",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (fatalErrorExpanded) {
+                                            IconButton(
+                                                onClick = {
+                                                    clipboardManager.setText(AnnotatedString(fatalErrorDetails ?: ""))
+                                                },
+                                                modifier = Modifier.size(24.dp).padding(end = 4.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ContentCopy,
+                                                    contentDescription = "Copy Error",
+                                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                        Icon(
+                                            imageVector = if (fatalErrorExpanded)
+                                                Icons.Default.KeyboardArrowUp
+                                            else
+                                                Icons.Default.KeyboardArrowDown,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+
+                                AnimatedVisibility(
+                                    visible = fatalErrorExpanded,
+                                    enter = expandVertically(),
+                                    exit = shrinkVertically()
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .heightIn(max = 200.dp)
+                                                .verticalScroll(rememberScrollState())
+                                                .horizontalScroll(rememberScrollState())
+                                                .padding(10.dp)
+                                        ) {
+                                            Text(
+                                                text = fatalErrorDetails,
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 10.sp,
+                                                    lineHeight = 14.sp
+                                                ),
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
                     showErrorDialog = false
+                    fatalErrorExpanded = false
                     onClearError()
                 }) {
                     Text("OK")

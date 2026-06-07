@@ -54,7 +54,12 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
+    implementation("com.google.mediapipe:tasks-genai:0.10.14")
+    // LiteRT-LM SDK — MUST use 0.12.0 (confirmed working with GPU in commit af90148)
+    // 0.10.2 → SIGABRT in XNNPACK weight_cache.cc
+    // 0.11.0 → SIGABRT on device (same XNNPACK issue)
+    // 0.12.0 → confirmed working with GPU on RMX5030 (Dimensity 9300+)
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")

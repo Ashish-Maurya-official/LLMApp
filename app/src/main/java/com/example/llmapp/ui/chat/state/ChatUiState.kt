@@ -10,6 +10,7 @@ data class ChatUiState(
     val isLoadingModel: Boolean = false,
     val status: String = "Ready",
     val errorMessage: String? = null,
+    val fatalErrorDetails: String? = null,
     val fallbackMessage: String? = null,
     val fallbackErrorDetails: String? = null,
     val isVoiceModeActive: Boolean = false,

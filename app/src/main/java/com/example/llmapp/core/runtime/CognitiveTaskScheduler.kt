@@ -46,6 +46,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
     var replayTracer: com.example.llmapp.core.telemetry.ReplayTracer? = null
     var equilibriumMonitor: com.example.llmapp.core.telemetry.EquilibriumMonitor? = null
     var settingsManager: com.example.llmapp.core.settings.SettingsManager? = null
+    var memoryAgent: com.example.llmapp.core.memory.MemoryAgent? = null
 
     var llmInferenceManager: com.example.llmapp.core.inference.LlmInferenceManager? = null
         set(value) {
@@ -157,7 +158,34 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                         
                         val plan = com.example.llmapp.core.inference.ExecutionGraph.parseCognitivePlan(orchestratorJson, event.rawQuery)
                         
-                        // PARALLEL TOOL EXECUTION (Execution Graph)
+                        // ── PARALLEL COGNITIVE PROCESSES ──────────────────────────────
+                        
+                        // 1. Memory Recall (internal cognition — runs in parallel with tools)
+                        val memoryDeferred = if (plan.memoryPlan.enabled) {
+                            async {
+                                emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Recalling: ${plan.memoryPlan.goal}...</thought>\n", false, event.generationId))
+                                val budget = budgetFromImportance(plan.memoryPlan.importance)
+                                val costBudget = costBudgetFromImportance(plan.memoryPlan.importance)
+                                val goal = com.example.llmapp.core.orchestrator.MemoryGoal(
+                                    objective = plan.memoryPlan.goal,
+                                    categories = plan.memoryPlan.categories
+                                        .mapNotNull { com.example.llmapp.core.orchestrator.MemoryType.fromString(it) }
+                                        .toSet()
+                                        .ifEmpty { setOf(com.example.llmapp.core.orchestrator.MemoryType.SEMANTIC, com.example.llmapp.core.orchestrator.MemoryType.PROFILE) },
+                                    originalQuery = event.rawQuery,
+                                    maxResults = budget,
+                                    costBudget = costBudget
+                                )
+                                try {
+                                    memoryAgent?.recall(goal) ?: com.example.llmapp.core.orchestrator.MemoryResult.EMPTY
+                                } catch (e: Exception) {
+                                    Log.w("CognitiveTaskScheduler", "MemoryAgent recall failed: ${e.message}")
+                                    com.example.llmapp.core.orchestrator.MemoryResult.EMPTY
+                                }
+                            }
+                        } else null
+
+                        // 2. Tool Execution (external actions)
                         val toolResults = mutableMapOf<String, String>()
                         if (plan.tools.isNotEmpty() && plan.tools[0].name != "NONE") {
                             _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
@@ -178,6 +206,10 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                                 toolResults[plan.tools[index].name] = deferred.await()
                             }
                         }
+
+                        // Await memory result
+                        val memoryResult = memoryDeferred?.await() ?: com.example.llmapp.core.orchestrator.MemoryResult.EMPTY
+                        val memoryContext = memoryResult.toContextString()
                         
                         if (cancellationToken.isCancelled) return@launch
                         
@@ -198,7 +230,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                                         val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
                                             rawQuery = event.rawQuery,
                                             toolOutputs = toolResults,
-                                            memoryContext = ""
+                                            memoryContext = memoryContext
                                         )
                                         llmInferenceManager?.generateOrchestratorResponseAsync(finalPrompt, event.generationId)
                                         return@launch
@@ -208,7 +240,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                                     val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
                                         rawQuery = event.rawQuery,
                                         toolOutputs = toolResults,
-                                        memoryContext = ""
+                                        memoryContext = memoryContext
                                     )
                                     llmInferenceManager?.generateOrchestratorResponseAsync(finalPrompt, event.generationId)
                                     return@launch
@@ -220,7 +252,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                                 originalPrompt = event.prompt,
                                 rewrittenQuery = plan.rewrittenQuery,
                                 toolOutputs = toolResults,
-                                memoryContext = "" // Can wire memory consolidator here in the future
+                                memoryContext = memoryContext
                             )
                             llmInferenceManager?.generateMainResponseAsync(finalPrompt, event.generationId)
                         } else {
@@ -237,7 +269,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                             val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
                                 rawQuery = event.rawQuery,
                                 toolOutputs = toolResults,
-                                memoryContext = ""
+                                memoryContext = memoryContext
                             )
                             llmInferenceManager?.generateOrchestratorResponseAsync(finalPrompt, event.generationId)
                         }
@@ -413,5 +445,22 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 // Handle other events like TokenEmitted or System events
             }
         }
+    }
+
+    // ── Memory Retrieval Budgeting ────────────────────────────────────────────
+
+    /** Importance → max number of results to retrieve across all stores. */
+    private fun budgetFromImportance(importance: Float): Int = when {
+        importance > 0.8f -> 15
+        importance > 0.5f -> 8
+        importance > 0.2f -> 3
+        else -> 2
+    }
+
+    /** Importance → max total recall cost (PROFILE=1, SEMANTIC=3, EPISODIC=5). */
+    private fun costBudgetFromImportance(importance: Float): Int = when {
+        importance > 0.8f -> 20  // All stores
+        importance > 0.5f -> 10  // Profile + Semantic
+        else -> 5                // Profile only likely
     }
 }

@@ -17,16 +17,24 @@ object ExecutionGraph {
             Do not include any explanation or markdown formatting outside the JSON block.
             
             RULES:
-            1. If the user says a simple greeting like "hi", "hello", "how are you", the queryCategory MUST be SIMPLE_QUESTION, cognitiveDepth MUST be 1, and tools MUST be NONE.
+            1. If the user says a simple greeting like "hi", "hello", "how are you", cognitiveDepth MUST be 1, tools MUST be NONE, and memoryPlan.enabled MUST be false.
             2. ONLY use WEB_SEARCH if the user asks for real-time information, news, or facts you don't know.
             3. ONLY use FLASHLIGHT if the user explicitly asks to turn on or off the flashlight.
             4. If the user asks for coding, complex reasoning, or web search, cognitiveDepth MUST be 2. Otherwise, set it to 1.
+            5. Set memoryPlan.enabled=true when the user references personal info, past conversations, preferences, or previously discussed facts. Categories: PROFILE (name, DOB, location, preferences), SEMANTIC (learned facts), EPISODIC (past conversation topics). Set goal to describe WHAT to find. Set importance 0-1 (1.0=critical to answer, 0.3=nice to have). Do NOT generate search keywords.
+            6. memoryPlan and tools are independent. Both can be active simultaneously.
 
             SCHEMA:
             {
               "intent": "chat",
               "confidence": 1.0,
               "cognitiveDepth": 1,
+              "memoryPlan": {
+                "enabled": false,
+                "goal": "",
+                "categories": [],
+                "importance": 0.0
+              },
               "tools": [{"name": "NONE"}],
               "rewrittenQuery": "string"
             }
@@ -152,18 +160,17 @@ object ExecutionGraph {
                 }
             }
             
-            val memObj = obj.optJSONObject("memoryRequirements")
-            val categoriesList = mutableListOf<String>()
-            val catsArray = memObj?.optJSONArray("categories")
-            if (catsArray != null) {
-                for (i in 0 until catsArray.length()) {
-                    categoriesList.add(catsArray.getString(i))
-                }
+            // Parse memoryPlan (top-level, separate from tools)
+            val memPlanObj = obj.optJSONObject("memoryPlan")
+            val memCategories = mutableListOf<String>()
+            memPlanObj?.optJSONArray("categories")?.let { arr ->
+                for (i in 0 until arr.length()) memCategories.add(arr.getString(i))
             }
-            
-            val memoryReq = com.example.llmapp.core.orchestrator.MemoryRequest(
-                retrieve = memObj?.optBoolean("retrieve", false) ?: false,
-                categories = categoriesList
+            val memoryPlan = com.example.llmapp.core.orchestrator.MemoryPlan(
+                enabled = memPlanObj?.optBoolean("enabled", false) ?: false,
+                goal = memPlanObj?.optString("goal", "") ?: "",
+                categories = memCategories,
+                importance = memPlanObj?.optDouble("importance", 0.0)?.toFloat() ?: 0f
             )
             
             return com.example.llmapp.core.orchestrator.CognitivePlan(
@@ -171,7 +178,7 @@ object ExecutionGraph {
                 confidence = obj.optDouble("confidence", 1.0).toFloat(),
                 cognitiveDepth = obj.optInt("cognitiveDepth", 2),
                 tools = toolRequests,
-                memoryRequirements = memoryReq,
+                memoryPlan = memoryPlan,
                 rewrittenQuery = obj.optString("rewrittenQuery", originalQuery)
             )
 
@@ -182,7 +189,7 @@ object ExecutionGraph {
                 confidence = 0.5f,
                 cognitiveDepth = 2,
                 tools = listOf(com.example.llmapp.core.orchestrator.ToolRequest("NONE", 1, false)),
-                memoryRequirements = com.example.llmapp.core.orchestrator.MemoryRequest(false, emptyList()),
+                memoryPlan = com.example.llmapp.core.orchestrator.MemoryPlan.DISABLED,
                 rewrittenQuery = originalQuery
             )
         }

@@ -243,6 +243,12 @@ class ChatViewModel : ViewModel() {
         embeddingManager = em
         hybridRetriever = com.example.llmapp.core.retrieval.HybridRetriever(hMgr.chatDao(), em)
         
+        // Initialize MemoryAgent with the dedicated MemoryDao
+        val memoryAgent = com.example.llmapp.core.memory.MemoryAgent(hMgr.database.memoryDao())
+        cognitiveTaskScheduler.memoryAgent = memoryAgent
+        // Wire LLM if already available
+        llmInferenceManager?.let { memoryAgent.llmInferenceManager = it }
+
         // Initialize Evaluation Runner once Retriever is ready
         llmInferenceManager?.let { inferenceManager ->
             evaluationRunner = com.example.llmapp.core.evaluation.EvaluationRunner(hMgr.database, hybridRetriever!!, inferenceManager)
@@ -292,6 +298,9 @@ class ChatViewModel : ViewModel() {
             field = value
             cognitiveTaskScheduler.llmInferenceManager = value
             
+            // Wire MemoryAgent's LLM reference for summarization
+            value?.let { cognitiveTaskScheduler.memoryAgent?.llmInferenceManager = it }
+            
             // Wire EvaluationRunner and MemoryConsolidator
             historyManager?.let { hMgr ->
                 hybridRetriever?.let { retriever ->
@@ -300,8 +309,12 @@ class ChatViewModel : ViewModel() {
                         memoryConsolidator = com.example.llmapp.core.history.MemoryConsolidator(
                             viewModelScope,
                             inferenceManager,
-                            hMgr.database.cognitiveStateDao()
-                        )
+                            hMgr.database.cognitiveStateDao(),
+                            hMgr.database.memoryDao()
+                        ).also { consolidator ->
+                            // Invalidate MemoryAgent cache when new memories are written
+                            consolidator.onMemoryWritten = { cognitiveTaskScheduler.memoryAgent?.invalidateCache() }
+                        }
                     }
                 }
             }

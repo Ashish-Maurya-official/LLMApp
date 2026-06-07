@@ -2,7 +2,10 @@ package com.example.llmapp.core.history
 
 import android.util.Log
 import com.example.llmapp.core.database.CognitiveStateDao
+import com.example.llmapp.core.database.MemoryDao
 import com.example.llmapp.core.database.MemoryEntity
+import com.example.llmapp.core.database.ProfileMemoryEntity
+import com.example.llmapp.core.database.SemanticMemoryEntity
 import com.example.llmapp.core.inference.LlmInferenceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,12 +15,14 @@ import kotlinx.coroutines.launch
 
 /**
  * Background pipeline that intelligently synthesizes chat turns into high-density 
- * memory assertions before inserting them into RAG, preventing database bloat.
+ * memory assertions, classifying them by type (PROFILE/SEMANTIC) with importance
+ * scores before inserting into the appropriate memory store.
  */
 class MemoryConsolidator(
     private val scope: CoroutineScope,
     private val llmInferenceManager: LlmInferenceManager,
-    private val cognitiveStateDao: CognitiveStateDao
+    private val cognitiveStateDao: CognitiveStateDao,
+    private var memoryDao: MemoryDao? = null
 ) {
     // Queue of pending chat turns to analyze: Pair<UserText, LlmText>
     private val processingQueue = Channel<Pair<String, String>>(Channel.UNLIMITED)
@@ -28,8 +33,15 @@ class MemoryConsolidator(
         "goodbye", "bye", "yes", "no", "sure", "got it", "understood"
     )
 
+    // Called after new memories are written to invalidate retrieval cache
+    var onMemoryWritten: (() -> Unit)? = null
+
     init {
         startWorker()
+    }
+
+    fun setMemoryDao(dao: MemoryDao) {
+        this.memoryDao = dao
     }
 
     /**
@@ -49,7 +61,7 @@ class MemoryConsolidator(
                     // Small yield to prevent thrashing
                     delay(500)
                 } catch (e: Exception) {
-                    Log.e("MemoryConsolidator", "Error consolidating memory: \${e.message}")
+                    Log.e("MemoryConsolidator", "Error consolidating memory: ${e.message}")
                 }
             }
         }
@@ -61,18 +73,37 @@ class MemoryConsolidator(
         val wordCount = cleanUser.split(Regex("\\s+")).size
         
         if (wordCount < 4 && stopPhrases.any { cleanUser.equals(it, ignoreCase = true) }) {
-            Log.d("MemoryConsolidator", "Skipping short chatter: '\$cleanUser'")
+            Log.d("MemoryConsolidator", "Skipping short chatter: '$cleanUser'")
             return
         }
 
-        // GATE 2: Orchestrator Semantic Extraction
+        // GATE 2: Orchestrator Semantic Extraction with type + importance classification
         val extractionPrompt = """
             <start_of_turn>system
             You are the Memory Consolidator. Extract factual information or user preferences from the interaction.
             Output ONLY valid JSON. If there is no salient information, output {"salient": false}.
+            
+            Classify the type:
+            - PROFILE: User identity info (name, DOB, location, preferences, pets, job)
+            - SEMANTIC: Learned facts, technical details, project info
+            
+            Set importance score:
+            - 1.0: Identity (name, DOB, location)
+            - 0.95: Career/education
+            - 0.9: Long-term projects/goals
+            - 0.7: Preferences/opinions
+            - 0.5: Skills/technologies used
+            - 0.3: Casual interests
+            - 0.05: Small talk/greetings
+            
+            For PROFILE type, also set "key" (lowercase, snake_case identifier like "name", "location", "pet_name").
+            
             SCHEMA:
             {
               "fact": "string",
+              "type": "PROFILE | SEMANTIC",
+              "key": "string (for PROFILE only)",
+              "importance": float (0.0 to 1.0),
               "confidence": float (0.0 to 1.0),
               "source": "conversation",
               "salient": true
@@ -87,7 +118,6 @@ class MemoryConsolidator(
         """.trimIndent()
 
         Log.d("MemoryConsolidator", "Extracting semantic salience in background...")
-        // Use the lightweight Orchestrator for this background task
         val rawResult = llmInferenceManager.generateOrchestratorResponse(extractionPrompt).trim()
         val extractionResult = if (rawResult.startsWith("{")) rawResult else "{\n$rawResult"
 
@@ -101,20 +131,60 @@ class MemoryConsolidator(
             val fact = json.optString("fact", "")
             if (fact.isBlank()) return
             
-            Log.d("MemoryConsolidator", "Extracted Salient Memory: $fact")
+            val type = json.optString("type", "SEMANTIC").uppercase()
+            val importance = json.optDouble("importance", 0.5).toFloat()
+            val key = json.optString("key", "unknown")
+            
+            Log.d("MemoryConsolidator", "Extracted: [$type] $fact (importance=$importance)")
 
-            // GATE 3: RAG Ingestion
+            // Write to new typed stores via MemoryDao
+            val mDao = memoryDao
+            if (mDao != null) {
+                when (type) {
+                    "PROFILE" -> {
+                        // Expire old value for this key before inserting new one
+                        mDao.expireProfile(key)
+                        mDao.insertProfile(ProfileMemoryEntity(
+                            key = key,
+                            value = fact,
+                            importanceScore = importance,
+                            epistemicState = "ASSUMED",
+                            lineageId = "consolidated_${System.currentTimeMillis()}"
+                        ))
+                        Log.d("MemoryConsolidator", "Profile memory committed: $key → $fact")
+                    }
+                    else -> {
+                        // Check for duplicate before inserting
+                        val existing = mDao.getSemanticByExactContent(fact)
+                        if (existing == null) {
+                            mDao.insertSemantic(SemanticMemoryEntity(
+                                content = fact,
+                                importanceScore = importance,
+                                epistemicState = "ASSUMED",
+                                lineageId = "consolidated_${System.currentTimeMillis()}"
+                            ))
+                            Log.d("MemoryConsolidator", "Semantic memory committed: $fact")
+                        } else {
+                            Log.d("MemoryConsolidator", "Duplicate semantic memory skipped: $fact")
+                        }
+                    }
+                }
+                // Notify MemoryAgent to invalidate cache
+                onMemoryWritten?.invoke()
+            }
+
+            // Legacy: also write to old MemoryEntity table for backward compatibility
             val memoryEntity = MemoryEntity(
                 sessionId = "consolidated_${System.currentTimeMillis()}",
-                type = "semantic",
-                content = json.toString(), // Store as JSON string
-                trustZone = 2 // 2 = Agent Inferred
+                type = type.lowercase(),
+                content = json.toString(),
+                trustZone = 2
             )
-
             cognitiveStateDao.insertMemories(listOf(memoryEntity))
-            Log.d("MemoryConsolidator", "Memory safely committed to RAG.")
+            
         } catch (e: Exception) {
             Log.e("MemoryConsolidator", "Failed to parse or save semantic memory JSON: ${e.message}")
         }
     }
 }
+

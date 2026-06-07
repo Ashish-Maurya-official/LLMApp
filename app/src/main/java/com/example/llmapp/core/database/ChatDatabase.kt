@@ -12,13 +12,21 @@ import androidx.room.RoomDatabase
         MemoryEntity::class,
         MemoryFtsEntity::class,
         GoalEntity::class,
-        CognitiveSnapshotEntity::class
+        CognitiveSnapshotEntity::class,
+        // New memory stores
+        ProfileMemoryEntity::class,
+        SemanticMemoryEntity::class,
+        SemanticMemoryFtsEntity::class,
+        EpisodeEntity::class,
+        ChapterEntity::class,
+        BookEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
+    abstract fun memoryDao(): MemoryDao
     abstract fun goalDao(): GoalDao
     abstract fun snapshotDao(): SnapshotDao
     abstract fun cognitiveStateDao(): CognitiveStateDao

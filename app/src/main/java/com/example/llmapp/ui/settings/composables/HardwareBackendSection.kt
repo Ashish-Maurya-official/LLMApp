@@ -74,6 +74,28 @@ fun HardwareBackendSection(
                         }
                     )
                 }
+
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                val context = androidx.compose.ui.platform.LocalContext.current
+                var showResetToast by remember { mutableStateOf(false) }
+                
+                Button(
+                    onClick = {
+                        val probe = com.example.llmapp.core.inference.GpuCapabilityProbe(context)
+                        probe.resetCrashHistory()
+                        showResetToast = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                ) {
+                    Text("Reset GPU/NPU Crash History")
+                }
+                
+                if (showResetToast) {
+                    android.widget.Toast.makeText(context, "GPU/NPU history reset. Please restart models.", android.widget.Toast.LENGTH_LONG).show()
+                    showResetToast = false
+                }
             }
         }
     }

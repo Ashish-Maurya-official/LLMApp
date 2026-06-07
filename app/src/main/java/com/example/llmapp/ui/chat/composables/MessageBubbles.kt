@@ -1,26 +1,35 @@
 package com.example.llmapp.ui.chat.composables
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.llmapp.AgentAction
 import com.example.llmapp.ChatMessage
+import com.example.llmapp.core.runtime.ThoughtItem
+import com.example.llmapp.core.runtime.ThoughtSource
+import com.example.llmapp.core.runtime.ThoughtState
 import com.example.llmapp.ui.chat.utils.getStableStreamingText
 import com.example.llmapp.ui.chat.state.StreamingSegment
 import com.example.llmapp.ui.chat.state.StreamingState
-import androidx.compose.runtime.State
+import androidx.compose.ui.text.AnnotatedString
+import kotlinx.coroutines.delay
 
 @Composable
 fun UserMessageBubble(text: String, modifier: Modifier = Modifier) {
@@ -43,30 +52,74 @@ fun UserMessageBubble(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+// ── ThinkingTimeline ────────────────────────────────────────────────────────
+// Replaces both ThoughtsChip and ActionChip with a unified cognitive timeline.
+
 @Composable
-fun ThoughtsChip(thoughts: List<String>) {
+fun ThinkingTimeline(thoughts: List<ThoughtItem>, isStreaming: Boolean) {
+    if (thoughts.isEmpty()) return
+
     var expanded by remember { mutableStateOf(false) }
+    val activeCount = thoughts.count { it.state == ThoughtState.ACTIVE }
+    val latestActive = thoughts.lastOrNull { it.state == ThoughtState.ACTIVE }
+
     Surface(
         onClick = { expanded = !expanded },
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .animateContentSize()
     ) {
-        Column(modifier = Modifier.padding(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Psychology, contentDescription = "Thinking", modifier = Modifier.size(16.dp))
+        Column(modifier = Modifier.padding(10.dp)) {
+            // ── Header ──────────────────────────────────────────────────
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    Icons.Default.Psychology,
+                    contentDescription = "Thinking",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Thinking...", style = MaterialTheme.typography.labelMedium)
-            }
-            if (expanded) {
-                Spacer(modifier = Modifier.height(4.dp))
-                thoughts.forEach { thought ->
+
+                if (isStreaming && activeCount > 0 && latestActive != null) {
+                    // Animate the active task name with dots
+                    AnimatedThinkingText(text = latestActive.title)
+                } else {
+                    // All done — show step count
                     Text(
-                        thought,
-                        style = MaterialTheme.typography.bodySmall,
+                        "${thoughts.size} step${if (thoughts.size != 1) "s" else ""} completed",
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+                Icon(
+                    Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    modifier = Modifier
+                        .size(18.dp)
+                        .rotate(if (expanded) 180f else 0f),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+            }
+
+            // ── Expanded timeline ───────────────────────────────────────
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    thoughts.forEach { thought ->
+                        ThoughtTimelineRow(thought = thought, isStreaming = isStreaming)
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
                 }
             }
         }
@@ -74,27 +127,143 @@ fun ThoughtsChip(thoughts: List<String>) {
 }
 
 @Composable
-fun ActionChip(action: AgentAction) {
-    var expanded by remember { mutableStateOf(false) }
-    Surface(
-        onClick = { expanded = !expanded },
-        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+private fun ThoughtTimelineRow(thought: ThoughtItem, isStreaming: Boolean) {
+    var updatesExpanded by remember { mutableStateOf(false) }
+    val hasUpdates = thought.updates.isNotEmpty()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp)
     ) {
-        Column(modifier = Modifier.padding(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Language, contentDescription = "Action", modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Searched Web: ${action.query}", style = MaterialTheme.typography.labelMedium)
+        // Main row: icon + source + title
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = if (hasUpdates) Modifier.padding(bottom = 2.dp) else Modifier
+        ) {
+            // State icon
+            when (thought.state) {
+                ThoughtState.COMPLETED -> {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = "Done",
+                        modifier = Modifier.size(14.dp),
+                        tint = Color(0xFF4CAF50)
+                    )
+                }
+                ThoughtState.ACTIVE -> {
+                    if (isStreaming) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 1.5.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        // Not streaming but still ACTIVE — shouldn't happen, but handle gracefully
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = "Done",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    }
+                }
             }
-            if (expanded && action.uiSources != null) {
-                Spacer(modifier = Modifier.height(4.dp))
-                ParsedMarkdownMessage(text = action.uiSources)
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Source label
+            Text(
+                text = thought.source.displayName(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+
+            // Title
+            Text(
+                text = thought.title,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Expand toggle for updates
+            if (hasUpdates) {
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(
+                    onClick = { updatesExpanded = !updatesExpanded },
+                    modifier = Modifier.size(18.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ExpandMore,
+                        contentDescription = if (updatesExpanded) "Collapse" else "Expand",
+                        modifier = Modifier
+                            .size(14.dp)
+                            .rotate(if (updatesExpanded) 180f else 0f),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                    )
+                }
+            }
+        }
+
+        // Updates sub-list (tree view)
+        AnimatedVisibility(
+            visible = updatesExpanded && hasUpdates,
+            enter = expandVertically(),
+            exit = shrinkVertically()
+        ) {
+            Column(modifier = Modifier.padding(start = 22.dp, top = 2.dp)) {
+                thought.updates.forEachIndexed { index, update ->
+                    val isLast = index == thought.updates.lastIndex
+                    Row(modifier = Modifier.padding(vertical = 1.dp)) {
+                        Text(
+                            text = if (isLast) "└" else "├",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = update,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+                }
             }
         }
     }
 }
+
+@Composable
+private fun AnimatedThinkingText(text: String) {
+    var dots by remember { mutableStateOf("") }
+    LaunchedEffect(text) {
+        while (true) {
+            dots = "."; delay(300)
+            dots = ".."; delay(300)
+            dots = "..."; delay(300)
+            dots = ""; delay(300)
+        }
+    }
+    Text(
+        text = "$text$dots",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+/** Human-readable display name for each ThoughtSource */
+private fun ThoughtSource.displayName(): String = when (this) {
+    ThoughtSource.ORCHESTRATOR -> "Planner"
+    ThoughtSource.MEMORY -> "Memory"
+    ThoughtSource.WEB_SEARCH -> "Web"
+    ThoughtSource.TOOL_EXECUTOR -> "Tools"
+    ThoughtSource.CONTEXT_COMPOSER -> "Engine"
+    ThoughtSource.RUNTIME -> "Runtime"
+}
+
+// ── Message Bubbles ─────────────────────────────────────────────────────────
 
 @Composable
 fun AssistantMessageBubble(
@@ -134,12 +303,9 @@ fun AssistantMessageBubble(
         }
 
         Column(modifier = Modifier.fillMaxWidth()) {
+            // Unified thinking timeline (replaces ThoughtsChip + ActionChip)
             if (message.thoughts.isNotEmpty()) {
-                ThoughtsChip(thoughts = message.thoughts)
-            }
-
-            message.actions.forEach { action ->
-                ActionChip(action = action)
+                ThinkingTimeline(thoughts = message.thoughts, isStreaming = isStreaming)
             }
 
             if (message.text.isNotBlank()) {
@@ -173,12 +339,13 @@ fun StreamingBubbleItem(
     clipboardManager: androidx.compose.ui.platform.ClipboardManager
 ) {
     val state = streamingState.value
-    if (state.rawContent.isNotBlank()) {
+
+    // Show the thinking timeline even before answer tokens arrive
+    if (state.rawContent.isNotBlank() || state.thoughts.isNotEmpty()) {
         val genMsg = ChatMessage(
             text = state.visibleText,
             isUser = false,
-            thoughts = state.thoughts,
-            actions = state.actions
+            thoughts = state.thoughts
         )
         AssistantMessageBubble(
             message = genMsg,
@@ -187,14 +354,11 @@ fun StreamingBubbleItem(
             isStreaming = true
         )
     } else {
+        // No thoughts and no content yet — minimal spinner
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                "Thinking...",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            AnimatedThinkingText(text = "Thinking")
         }
     }
 }

@@ -81,7 +81,6 @@ import com.example.llmapp.ui.chat.state.ChatUiState
 import com.example.llmapp.ui.chat.state.VoiceState
 import com.example.llmapp.ui.voice.VoiceConversationOverlay
 import com.example.llmapp.ChatMessage
-import com.example.llmapp.AgentAction
 import com.example.llmapp.ui.chat.utils.isNearBottom
 import com.example.llmapp.ui.chat.composables.ChatTopBar
 import com.example.llmapp.ui.chat.composables.ChatInputBar
@@ -269,6 +268,19 @@ fun ChatScreen(
         }
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(uiState.errorMessage) {
+        uiState.errorMessage?.let { msg ->
+            snackbarHostState.showSnackbar(
+                message = msg,
+                actionLabel = "Dismiss",
+                duration = SnackbarDuration.Long
+            )
+            onIntent(ChatIntent.SetError(null))
+        }
+    }
+
     // Root box so VoiceConversationOverlay can be positioned absolutely
     // over the ENTIRE screen (including top bar / status bar).
     Box(modifier = Modifier.fillMaxSize()) {
@@ -277,6 +289,7 @@ fun ChatScreen(
             modifier = Modifier.pointerInput(Unit) {
                 detectTapGestures(onTap = { focusManager.clearFocus() })
             },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 ChatTopBar(
                     uiState = uiState,

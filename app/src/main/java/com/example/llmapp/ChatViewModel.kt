@@ -275,6 +275,8 @@ class ChatViewModel : ViewModel() {
 
     // Tracks how many times we've allowed `[SEARCH_NEEDED: ...]` in a single user turn.
     @Volatile private var searchChainDepth: Int = 0
+    // Tracks the active search ThoughtEvent ID for completion signaling
+    @Volatile private var activeSearchThoughtId: String? = null
 
     // ── Session ID ───────────────────────────────────────────────────────────
     private var currentSessionId: String = System.currentTimeMillis().toString()
@@ -321,25 +323,15 @@ class ChatViewModel : ViewModel() {
         }
 
     // ── Parsing ──────────────────────────────────────────────────────────────
-    private data class ParsedContent(val thoughts: List<String>, val visibleText: String, val raw: String)
+    // Thoughts no longer come from XML tags in the token stream.
+    // They arrive as typed ThoughtEvents via the CognitiveEvent bus.
+    private data class ParsedContent(val visibleText: String, val raw: String)
 
     private fun parseStreamContent(raw: String): ParsedContent {
-        val thoughts = mutableListOf<String>()
-        val visibleText = StringBuilder()
-        var idx = 0
-        while (idx < raw.length) {
-            val start = raw.indexOf("<thought>", idx)
-            if (start != -1) {
-                visibleText.append(raw.substring(idx, start))
-                val end = raw.indexOf("</thought>", start + 9)
-                if (end != -1) { val t = raw.substring(start + 9, end).trim(); if (t.isNotBlank()) thoughts.add(t); idx = end + 10 }
-                else { val t = raw.substring(start + 9).trim(); if (t.isNotBlank()) thoughts.add(t); idx = raw.length }
-            } else { visibleText.append(raw.substring(idx)); break }
-        }
-        // Strip any form of the sentinel (with or without embedded query)
-        var clean = visibleText.toString()
+        var clean = raw
+        // Strip any residual sentinel markers (will be removed entirely in Phase 5)
         val SENTINEL_REGEX = Regex("""\[SEARCH_NEEDED(?::\s*([^\]]+))?\]""")
-        clean = SENTINEL_REGEX.replace(clean, "").replace("<thought>", "").trimStart()
+        clean = SENTINEL_REGEX.replace(clean, "").trimStart()
 
         // 1. Fail-safe weather card filtering: only allow weather cards if the user's query is weather-related
         val lowerQuery = currentUserQuery.lowercase()
@@ -364,7 +356,6 @@ class ChatViewModel : ViewModel() {
         )
         metaPhrases.forEach { regex ->
             clean = regex.replace(clean, { matchResult ->
-                // Keep the bullet point indicator if it was immediately after a bullet symbol
                 val matchIndex = matchResult.range.first
                 if (matchIndex > 0 && clean[matchIndex - 1] == ' ') "" else ""
             })
@@ -385,7 +376,7 @@ class ChatViewModel : ViewModel() {
             }
         }
 
-        return ParsedContent(thoughts, clean, raw)
+        return ParsedContent(clean, raw)
     }
 
     // ── Token handler (event bus consumer) ───────────────────────────────────
@@ -411,25 +402,64 @@ class ChatViewModel : ViewModel() {
                     onNewLlmToken("", true)
                 }
 
-                _streamingState.value = StreamingState(
+                _streamingState.value = _streamingState.value.copy(
                     rawContent = newRaw,
                     visibleText = parsed.visibleText,
-                    segments = parseStreamingSegments(parsed.visibleText),
-                    thoughts = parsed.thoughts,
-                    actions = _streamingState.value.actions
+                    segments = parseStreamingSegments(parsed.visibleText)
                 )
                 if (!_uiState.value.isGenerating) _uiState.update { it.copy(isGenerating = true) }
+            }
+
+            // ── ThoughtEvent handlers ─────────────────────────────────────
+            is com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtStarted -> {
+                val items = _streamingState.value.thoughts.toMutableList()
+                items.add(com.example.llmapp.core.runtime.ThoughtItem(
+                    id = event.id,
+                    source = event.source,
+                    title = event.title,
+                    updates = emptyList(),
+                    state = com.example.llmapp.core.runtime.ThoughtState.ACTIVE,
+                    timestamp = event.timestamp
+                ))
+                _streamingState.value = _streamingState.value.copy(thoughts = items)
+                if (!_uiState.value.isGenerating) _uiState.update { it.copy(isGenerating = true) }
+            }
+
+            is com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtUpdated -> {
+                val items = _streamingState.value.thoughts.toMutableList()
+                val idx = items.indexOfFirst { it.id == event.id }
+                if (idx >= 0) {
+                    val current = items[idx]
+                    items[idx] = current.copy(updates = current.updates + event.content)
+                }
+                _streamingState.value = _streamingState.value.copy(thoughts = items)
+            }
+
+            is com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtCompleted -> {
+                val items = _streamingState.value.thoughts.toMutableList()
+                val idx = items.indexOfFirst { it.id == event.id }
+                if (idx >= 0) {
+                    items[idx] = items[idx].copy(
+                        updates = items[idx].updates + event.summary,
+                        state = com.example.llmapp.core.runtime.ThoughtState.COMPLETED
+                    )
+                }
+                _streamingState.value = _streamingState.value.copy(thoughts = items)
             }
             
             is com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationComplete -> {
                 val currentStreaming = _streamingState.value
                 val parsed = parseStreamContent(currentStreaming.rawContent)
 
+                // Only persist COMPLETED thoughts — no stale "Searching..." in history
+                val completedThoughts = currentStreaming.thoughts.filter {
+                    it.state == com.example.llmapp.core.runtime.ThoughtState.COMPLETED
+                }
+
                 val finalMsg = ChatMessage(
                     text = parsed.visibleText,
                     isUser = false,
-                    thoughts = parsed.thoughts,
-                    actions = currentStreaming.actions,
+                    thoughts = completedThoughts,
                     rawContent = currentStreaming.rawContent
                 )
                 allMessages.add(finalMsg)
@@ -456,7 +486,7 @@ class ChatViewModel : ViewModel() {
             }
 
             is com.example.llmapp.core.runtime.CognitiveEvent.ToolEvent.SearchRequested -> {
-                _streamingState.value = StreamingState(actions = emptyList())
+                _streamingState.value = _streamingState.value.copy()
                 performWebSearch(event.query, event.generationId)
             }
 
@@ -490,14 +520,16 @@ class ChatViewModel : ViewModel() {
         Log.d("ChatViewModel", "performWebSearch: \"$query\"")
         val intent = com.example.llmapp.core.search.SearchIntentClassifier.classify(query, allMessages)
         
-        // Update UI Action Chip
-        val actions = _streamingState.value.actions.toMutableList()
-        actions.add(com.example.llmapp.AgentAction(
-            toolName = "Web Search",
-            query = query,
-            uiSources = "Searching Web (${intent.type.name}): $query"
+        // Emit search thought event
+        val searchThoughtId = java.util.UUID.randomUUID().toString()
+        activeSearchThoughtId = searchThoughtId
+        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtStarted(
+            searchThoughtId, com.example.llmapp.core.runtime.ThoughtSource.WEB_SEARCH,
+            "Searching web", genId
         ))
-        _streamingState.value = _streamingState.value.copy(actions = actions)
+        cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtUpdated(
+            searchThoughtId, "Searching: \"$query\"", generationId = genId
+        ))
 
         viewModelScope.launch(Dispatchers.IO) {
             val orchestrator = searchOrchestrator
@@ -562,12 +594,6 @@ class ChatViewModel : ViewModel() {
      */
     private fun retryWithRefinedQuery(failedQuery: String, genId: String) {
         Log.d("ChatViewModel", "Requesting refined query. Failed query was: \"$failedQuery\"")
-        // Update action chip to show we're retrying
-        val actions = _streamingState.value.actions.toMutableList()
-        if (actions.isNotEmpty()) {
-            actions[actions.lastIndex] = actions.last().copy(uiSources = "Refining search query…")
-        }
-        _streamingState.value = _streamingState.value.copy(actions = actions)
 
         // Signal scheduler that the current search cycle is done so it resets properly
         cognitiveTaskScheduler.emit(
@@ -638,13 +664,12 @@ class ChatViewModel : ViewModel() {
      */
     private fun fallbackGenerationWithoutSearch(genId: String, reason: String?) {
         Log.d("ChatViewModel", "Continuing without web search. Reason: ${reason ?: "skipped"}")
-        // Update action chip status if visible
-        if (reason != null) {
-            val actions = _streamingState.value.actions.toMutableList()
-            if (actions.isNotEmpty()) {
-                actions[actions.lastIndex] = actions.last().copy(uiSources = "Search unavailable")
-            }
-            _streamingState.value = _streamingState.value.copy(actions = actions)
+        // Complete the search thought event if active
+        activeSearchThoughtId?.let { thoughtId ->
+            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtCompleted(
+                thoughtId, reason ?: "Search skipped", genId
+            ))
+            activeSearchThoughtId = null
         }
         // Signal scheduler that search is done (empty context — doesn't block pipeline)
         cognitiveTaskScheduler.emit(
@@ -685,12 +710,13 @@ class ChatViewModel : ViewModel() {
             fallbackGenerationWithoutSearch(genId, reason = null)
             return
         }
-        // Update the action chip with status text
-        val actions = _streamingState.value.actions.toMutableList()
-        if (actions.isNotEmpty() && uiText != null) {
-            actions[actions.lastIndex] = actions.last().copy(uiSources = uiText)
+        // Complete the search thought event with result summary
+        activeSearchThoughtId?.let { thoughtId ->
+            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtCompleted(
+                thoughtId, uiText ?: "Search complete", genId
+            ))
+            activeSearchThoughtId = null
         }
-        _streamingState.value = _streamingState.value.copy(actions = actions)
 
         // Let the scheduler know search is complete so it resets RETRIEVING phase → IDLE
         cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ToolEvent.SearchCompleted(llmText, genId))
@@ -756,12 +782,15 @@ class ChatViewModel : ViewModel() {
                 // SAVE PARTIAL MESSAGE BEFORE WIPING
                 val currentStreaming = _streamingState.value
                 val parsed = parseStreamContent(currentStreaming.rawContent)
-                if (parsed.visibleText.isNotBlank() || parsed.thoughts.isNotEmpty()) {
+                if (parsed.visibleText.isNotBlank() || currentStreaming.thoughts.isNotEmpty()) {
+                    // Only persist COMPLETED thoughts
+                    val completedThoughts = currentStreaming.thoughts.filter {
+                        it.state == com.example.llmapp.core.runtime.ThoughtState.COMPLETED
+                    }
                     val finalMsg = ChatMessage(
                         text = parsed.visibleText,
                         isUser = false,
-                        thoughts = parsed.thoughts,
-                        actions = currentStreaming.actions,
+                        thoughts = completedThoughts,
                         rawContent = currentStreaming.rawContent
                     )
                     allMessages.add(finalMsg)
@@ -963,13 +992,16 @@ class ChatViewModel : ViewModel() {
             if (intent.needed && intent.query != null) {
                 // We need search! Let's update UI and orchestrate the search directly
                 withContext(Dispatchers.Main) {
-                    val actions = _streamingState.value.actions.toMutableList()
-                    actions.add(com.example.llmapp.AgentAction(
-                        toolName = "Web Search",
-                        query = intent.query,
-                        uiSources = "Searching Web (${intent.type.name}): ${intent.query}"
+                    // Emit search thought event
+                    val searchThoughtId = java.util.UUID.randomUUID().toString()
+                    activeSearchThoughtId = searchThoughtId
+                    cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtStarted(
+                        searchThoughtId, com.example.llmapp.core.runtime.ThoughtSource.WEB_SEARCH,
+                        "Searching web", genId
                     ))
-                    _streamingState.value = _streamingState.value.copy(actions = actions)
+                    cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtUpdated(
+                        searchThoughtId, "Searching: \"${intent.query}\"", generationId = genId
+                    ))
                 }
                 
                 val orchestrator = searchOrchestrator
@@ -1060,9 +1092,6 @@ class ChatViewModel : ViewModel() {
 
     // ── JSON helpers ──────────────────────────────────────────────────────────
     private fun jsonToStringList(json: String): List<String> = try { val a = JSONArray(json); List(a.length()) { a.getString(it) } } catch (_: Exception) { emptyList() }
-    private fun jsonToActionsList(json: String): List<AgentAction> = try {
-        val a = JSONArray(json); List(a.length()) { i -> val o = a.getJSONObject(i); AgentAction(o.getString("toolName"), o.getString("query"), o.optString("result", null), o.optString("uiSources", null)) }
-    } catch (_: Exception) { emptyList() }
 
     override fun onCleared() { super.onCleared(); llmInferenceManager?.close(); embeddingManager?.close() }
 }

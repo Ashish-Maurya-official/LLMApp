@@ -43,13 +43,24 @@ object FollowUpResolver {
         for (i in history.indices.reversed()) {
             val msg = history[i]
             if (!msg.isUser) {
-                val searchAction = msg.actions.lastOrNull { it.toolName == "Web Search" }
-                if (searchAction != null && searchAction.query.isNotBlank()) {
-                    val q = searchAction.query.trim()
-                    // Filter out URL deep crawls to avoid polluting follow-up contexts
-                    if (!q.startsWith("http://", ignoreCase = true) && 
-                        !q.startsWith("https://", ignoreCase = true) && 
-                        !URL_REGEX.matches(q)) {
+                // Find ThoughtItems from WEB_SEARCH source to extract the search query
+                val searchThought = msg.thoughts.lastOrNull {
+                    it.source == com.example.llmapp.core.runtime.ThoughtSource.WEB_SEARCH
+                }
+                if (searchThought != null) {
+                    // Extract the query from the updates list (e.g. "Searching: \"query\"")
+                    val searchUpdate = searchThought.updates.firstOrNull { it.startsWith("Searching:") }
+                    val q = searchUpdate
+                        ?.removePrefix("Searching:")
+                        ?.trim()
+                        ?.removeSurrounding("\"")
+                        ?.trim()
+                        ?: searchThought.title.removePrefix("Searching web").trim()
+                    if (q.isNotBlank() &&
+                        !q.startsWith("http://", ignoreCase = true) &&
+                        !q.startsWith("https://", ignoreCase = true) &&
+                        !URL_REGEX.matches(q)
+                    ) {
                         return q
                     }
                 }

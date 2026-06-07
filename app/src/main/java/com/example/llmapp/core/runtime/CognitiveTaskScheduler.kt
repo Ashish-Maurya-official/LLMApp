@@ -142,11 +142,10 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                     try {
                         // LEVEL 1: Orchestrator LLM
                         _state.value = _state.value.copy(phase = ExecutionPhase.PLANNING)
-                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Level 1: Orchestrator Active...</thought>\n", false, event.generationId))
+                        val planThoughtId = java.util.UUID.randomUUID().toString()
+                        emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(planThoughtId, ThoughtSource.ORCHESTRATOR, "Planning response", event.generationId))
                         
                         val orchestratorPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorPrompt(event.rawQuery)
-                        // FIX(BUG 6): generateOrchestratorResponse is now a suspend fun
-                        // (was runBlocking which could deadlock the agentDispatcher pool)
                         val orchestratorJson = try {
                             llmInferenceManager?.generateOrchestratorResponse(orchestratorPrompt) ?: "{}"
                         } catch (e: Throwable) {
@@ -157,13 +156,22 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                         if (cancellationToken.isCancelled) return@launch
                         
                         val plan = com.example.llmapp.core.inference.ExecutionGraph.parseCognitivePlan(orchestratorJson, event.rawQuery)
+                        emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(planThoughtId, "Response planned", event.generationId))
                         
                         // ── PARALLEL COGNITIVE PROCESSES ──────────────────────────────
                         
                         // 1. Memory Recall (internal cognition — runs in parallel with tools)
+                        var memoryThoughtId: String? = null
                         val memoryDeferred = if (plan.memoryPlan.enabled) {
+                            memoryThoughtId = java.util.UUID.randomUUID().toString()
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(memoryThoughtId!!, ThoughtSource.MEMORY, "Recalling: ${plan.memoryPlan.goal}", event.generationId))
                             async {
-                                emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Recalling: ${plan.memoryPlan.goal}...</thought>\n", false, event.generationId))
+                                // Wire the MemoryAgent's thoughtEmitter to ThoughtUpdated events
+                                memoryAgent?.thoughtEmitter = { content ->
+                                    emit(CognitiveEvent.ThoughtEvent.ThoughtUpdated(
+                                        memoryThoughtId!!, content, generationId = event.generationId
+                                    ))
+                                }
                                 val budget = budgetFromImportance(plan.memoryPlan.importance)
                                 val costBudget = costBudgetFromImportance(plan.memoryPlan.importance)
                                 val goal = com.example.llmapp.core.orchestrator.MemoryGoal(
@@ -181,15 +189,19 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                                 } catch (e: Exception) {
                                     Log.w("CognitiveTaskScheduler", "MemoryAgent recall failed: ${e.message}")
                                     com.example.llmapp.core.orchestrator.MemoryResult.EMPTY
+                                } finally {
+                                    memoryAgent?.thoughtEmitter = null
                                 }
                             }
                         } else null
 
                         // 2. Tool Execution (external actions)
+                        var toolThoughtId: String? = null
                         val toolResults = mutableMapOf<String, String>()
                         if (plan.tools.isNotEmpty() && plan.tools[0].name != "NONE") {
                             _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
-                            emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Executing tools in parallel: ${plan.tools.joinToString { it.name }}</thought>\n", false, event.generationId))
+                            toolThoughtId = java.util.UUID.randomUUID().toString()
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(toolThoughtId!!, ThoughtSource.TOOL_EXECUTOR, "Executing: ${plan.tools.joinToString { it.name }}", event.generationId))
                             
                             val deferredResults = plan.tools.map { tool ->
                                 async {
@@ -205,11 +217,20 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                             deferredResults.forEachIndexed { index, deferred ->
                                 toolResults[plan.tools[index].name] = deferred.await()
                             }
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(toolThoughtId!!, "Tools completed", event.generationId))
                         }
 
                         // Await memory result
                         val memoryResult = memoryDeferred?.await() ?: com.example.llmapp.core.orchestrator.MemoryResult.EMPTY
                         val memoryContext = memoryResult.toContextString()
+                        if (memoryThoughtId != null) {
+                            val memorySummary = if (memoryResult.rankedFacts.isNotEmpty()) {
+                                "Found ${memoryResult.rankedFacts.size} memories"
+                            } else {
+                                "No relevant memories found"
+                            }
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(memoryThoughtId!!, memorySummary, event.generationId))
+                        }
                         
                         if (cancellationToken.isCancelled) return@launch
                         
@@ -218,15 +239,16 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                             if (llmInferenceManager?.isMainModelLoaded == false) {
                                 val defaultPath = settingsManager?.defaultMainModelPath
                                 val rawBackend = settingsManager?.mainHardwareBackend ?: "CPU"
-                                // Pre-resolve backend to prevent native GPU crashes during auto-load
                                 val resolvedBackend = com.example.llmapp.core.inference.LlmInferenceManager.resolveBackendPreference(rawBackend)
                                 if (!defaultPath.isNullOrBlank()) {
-                                    emit(CognitiveEvent.RuntimeEvent.TokenEmitted("<thought>Auto-loading Main Engine for complex task ($resolvedBackend backend, requested: $rawBackend)...</thought>\n", false, event.generationId))
+                                    val runtimeThoughtId = java.util.UUID.randomUUID().toString()
+                                    emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(runtimeThoughtId, ThoughtSource.RUNTIME, "Loading reasoning engine", event.generationId))
                                     try {
                                         llmInferenceManager?.loadMainModel(defaultPath, resolvedBackend)
+                                        emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(runtimeThoughtId, "Engine ready ($resolvedBackend)", event.generationId))
                                     } catch (e: Throwable) {
                                         Log.e("CognitiveTaskScheduler", "Failed to auto-load main model (backend=$resolvedBackend)", e)
-                                        emit(CognitiveEvent.RuntimeEvent.TokenEmitted("\n<thought>Failed to load Main Engine ($resolvedBackend): ${e.message}. Falling back to Orchestrator for response.</thought>\n", false, event.generationId))
+                                        emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(runtimeThoughtId, "Engine failed, using fallback", event.generationId))
                                         val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
                                             rawQuery = event.rawQuery,
                                             toolOutputs = toolResults,
@@ -236,7 +258,9 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                                         return@launch
                                     }
                                 } else {
-                                    emit(CognitiveEvent.RuntimeEvent.TokenEmitted("\n<thought>Main Engine not configured. Falling back to Orchestrator for response.</thought>\n", false, event.generationId))
+                                    val runtimeThoughtId = java.util.UUID.randomUUID().toString()
+                                    emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(runtimeThoughtId, ThoughtSource.RUNTIME, "No main engine configured", event.generationId))
+                                    emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(runtimeThoughtId, "Using orchestrator fallback", event.generationId))
                                     val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
                                         rawQuery = event.rawQuery,
                                         toolOutputs = toolResults,
@@ -248,6 +272,8 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                             }
 
                             _state.value = _state.value.copy(phase = ExecutionPhase.SYNTHESIZING)
+                            val genThoughtId = java.util.UUID.randomUUID().toString()
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(genThoughtId, ThoughtSource.CONTEXT_COMPOSER, "Generating response", event.generationId))
                             val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildContextComposerPrompt(
                                 originalPrompt = event.prompt,
                                 rewrittenQuery = plan.rewrittenQuery,
@@ -258,13 +284,8 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                         } else {
                             // LEVEL 1: Orchestrator answers simple queries directly
                             _state.value = _state.value.copy(phase = ExecutionPhase.SYNTHESIZING)
-                            
-                            val thoughtMessage = if (toolResults.isNotEmpty()) {
-                                "\n<thought>Background tasks completed. Orchestrator generating natural response...</thought>\n"
-                            } else {
-                                "\n<thought>Query is basic. Orchestrator generating response directly...</thought>\n"
-                            }
-                            emit(CognitiveEvent.RuntimeEvent.TokenEmitted(thoughtMessage, false, event.generationId))
+                            val genThoughtId = java.util.UUID.randomUUID().toString()
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(genThoughtId, ThoughtSource.CONTEXT_COMPOSER, "Generating response", event.generationId))
                             
                             val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
                                 rawQuery = event.rawQuery,
@@ -299,7 +320,38 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
             is CognitiveEvent.SystemEvent.ThermalStatusChanged -> {
                 Log.w("CognitiveTaskScheduler", "Thermal State Changed to: ${event.state}")
                 if (event.state == CognitiveEvent.ThermalState.CRITICAL) {
+                    // ── CRITICAL FIX: Don't silently kill GPU model ──────────────
+                    // 1. Emit visible warning so user knows what happened
+                    val thermalThoughtId = java.util.UUID.randomUUID().toString()
+                    val activeGenId = _state.value.activeGenerationId ?: "thermal"
+                    emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(
+                        thermalThoughtId, ThoughtSource.RUNTIME,
+                        "⚠️ Device overheating", activeGenId
+                    ))
+                    emit(CognitiveEvent.ThoughtEvent.ThoughtUpdated(
+                        thermalThoughtId, "Unloading GPU model to prevent damage", generationId = activeGenId
+                    ))
+
+                    // 2. Clear crash flags BEFORE unloading — this is a controlled shutdown, NOT a crash
+                    llmInferenceManager?.gpuProbe?.let { probe ->
+                        Log.w("CognitiveTaskScheduler", "Clearing GPU/NPU crash flags (thermal unload is not a crash)")
+                        probe.resetCrashHistory()
+                    }
+
+                    // 3. Unload the model
                     llmInferenceManager?.unloadMainModel()
+
+                    emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(
+                        thermalThoughtId, "GPU model unloaded — will reload when cooled", activeGenId
+                    ))
+
+                    // 4. Emit UI-visible error message
+                    emit(CognitiveEvent.RuntimeEvent.Error(
+                        CognitiveError.StateCorruptionError(
+                            "Device overheating: GPU model unloaded for safety. It will auto-reload on next query after cooldown."
+                        ),
+                        activeGenId
+                    ))
                 }
             }
 

@@ -57,8 +57,8 @@ class ChatHistoryManager(val context: Context) {
                     text = msg.text,
                     rawContent = msg.rawContent,
                     timestamp = msg.timestamp,
-                    thoughtsJson = JSONArray(msg.thoughts).toString(),
-                    actionsJson = actionsToJson(msg.actions)
+                    thoughtsJson = thoughtsToJson(msg.thoughts),
+                    actionsJson = "[]" // Deprecated, kept for DB compat
                 )
             }
             dao.insertMessages(messageEntities)
@@ -91,8 +91,8 @@ class ChatHistoryManager(val context: Context) {
                     text = message.text,
                     rawContent = message.rawContent,
                     timestamp = message.timestamp,
-                    thoughtsJson = JSONArray(message.thoughts).toString(),
-                    actionsJson = actionsToJson(message.actions)
+                    thoughtsJson = thoughtsToJson(message.thoughts),
+                    actionsJson = "[]" // Deprecated, kept for DB compat
                 )
             )
         }
@@ -126,8 +126,7 @@ class ChatHistoryManager(val context: Context) {
                     isUser = entity.isUser,
                     timestamp = entity.timestamp,
                     rawContent = entity.rawContent,
-                    thoughts = jsonToStringList(entity.thoughtsJson),
-                    actions = jsonToActionsList(entity.actionsJson)
+                    thoughts = jsonToThoughts(entity.thoughtsJson)
                 )
             }
         }
@@ -136,37 +135,58 @@ class ChatHistoryManager(val context: Context) {
         return dao.getMessagesPagingSource(sessionId)
     }
 
-    private fun actionsToJson(actions: List<com.example.llmapp.AgentAction>): String {
+    /** Serialize ThoughtItem list to JSON */
+    private fun thoughtsToJson(thoughts: List<com.example.llmapp.core.runtime.ThoughtItem>): String {
         val arr = JSONArray()
-        for (action in actions) {
+        thoughts.forEach { item ->
             val obj = JSONObject()
-            obj.put("toolName", action.toolName)
-            obj.put("query", action.query)
-            obj.put("result", action.result)
-            obj.put("uiSources", action.uiSources)
+            obj.put("id", item.id)
+            obj.put("source", item.source.name)
+            obj.put("title", item.title)
+            obj.put("updates", JSONArray(item.updates))
+            obj.put("state", item.state.name)
+            obj.put("timestamp", item.timestamp)
             arr.put(obj)
         }
         return arr.toString()
     }
 
-    private fun jsonToStringList(json: String): List<String> {
+    /** Deserialize ThoughtItem list from JSON, with backward compat for old List<String> format */
+    private fun jsonToThoughts(json: String): List<com.example.llmapp.core.runtime.ThoughtItem> {
         return try {
             val arr = JSONArray(json)
-            List(arr.length()) { i -> arr.getString(i) }
-        } catch (_: Exception) { emptyList() }
-    }
-
-    private fun jsonToActionsList(json: String): List<com.example.llmapp.AgentAction> {
-        return try {
-            val arr = JSONArray(json)
+            if (arr.length() == 0) return emptyList()
             List(arr.length()) { i ->
-                val obj = arr.getJSONObject(i)
-                com.example.llmapp.AgentAction(
-                    toolName = obj.getString("toolName"),
-                    query = obj.getString("query"),
-                    result = obj.optString("result", null),
-                    uiSources = obj.optString("uiSources", null)
-                )
+                val item = arr.get(i)
+                if (item is String) {
+                    // Legacy: plain string → migrate to ThoughtItem
+                    com.example.llmapp.core.runtime.ThoughtItem(
+                        id = java.util.UUID.randomUUID().toString(),
+                        source = com.example.llmapp.core.runtime.ThoughtSource.ORCHESTRATOR,
+                        title = item,
+                        updates = emptyList(),
+                        state = com.example.llmapp.core.runtime.ThoughtState.COMPLETED,
+                        timestamp = 0L
+                    )
+                } else {
+                    val obj = item as JSONObject
+                    val updatesArr = obj.optJSONArray("updates")
+                    val updates = if (updatesArr != null) {
+                        List(updatesArr.length()) { j -> updatesArr.getString(j) }
+                    } else emptyList()
+                    com.example.llmapp.core.runtime.ThoughtItem(
+                        id = obj.getString("id"),
+                        source = com.example.llmapp.core.runtime.ThoughtSource.valueOf(
+                            obj.optString("source", "ORCHESTRATOR")
+                        ),
+                        title = obj.getString("title"),
+                        updates = updates,
+                        state = com.example.llmapp.core.runtime.ThoughtState.valueOf(
+                            obj.optString("state", "COMPLETED")
+                        ),
+                        timestamp = obj.optLong("timestamp", 0L)
+                    )
+                }
             }
         } catch (_: Exception) { emptyList() }
     }

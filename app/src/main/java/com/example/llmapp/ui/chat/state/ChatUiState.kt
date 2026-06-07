@@ -1,7 +1,7 @@
 package com.example.llmapp.ui.chat.state
 
 import com.example.llmapp.ChatMessage
-import com.example.llmapp.AgentAction
+import com.example.llmapp.core.runtime.ThoughtItem
 
 enum class VoiceState { IDLE, LISTENING, THINKING, SPEAKING }
 
@@ -47,6 +47,5 @@ data class StreamingState(
     val rawContent: String = "",
     val visibleText: String = "",
     val segments: List<StreamingSegment> = emptyList(),
-    val thoughts: List<String> = emptyList(),
-    val actions: List<AgentAction> = emptyList()
+    val thoughts: List<ThoughtItem> = emptyList()
 )

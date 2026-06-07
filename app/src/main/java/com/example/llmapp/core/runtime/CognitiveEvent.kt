@@ -50,4 +50,35 @@ sealed interface CognitiveEvent {
         data class SearchRequested(val query: String, override val generationId: String, override val timestamp: Long = System.currentTimeMillis()) : ToolEvent
         data class SearchCompleted(val results: String, override val generationId: String, override val timestamp: Long = System.currentTimeMillis()) : ToolEvent
     }
+
+    // Thought Events — typed cognitive thought lifecycle (replaces <thought> XML tags)
+    sealed interface ThoughtEvent : CognitiveEvent {
+        val generationId: String
+
+        /** A new thought has started (e.g., "Planning response", "Searching memory") */
+        data class ThoughtStarted(
+            val id: String = java.util.UUID.randomUUID().toString(),
+            val source: ThoughtSource,
+            val title: String,
+            override val generationId: String,
+            override val timestamp: Long = System.currentTimeMillis()
+        ) : ThoughtEvent
+
+        /** An in-progress update to an existing thought (appended to updates list) */
+        data class ThoughtUpdated(
+            val id: String,
+            val content: String,
+            val progress: Float? = null,
+            override val generationId: String,
+            override val timestamp: Long = System.currentTimeMillis()
+        ) : ThoughtEvent
+
+        /** A thought has completed — final summary text */
+        data class ThoughtCompleted(
+            val id: String,
+            val summary: String,
+            override val generationId: String,
+            override val timestamp: Long = System.currentTimeMillis()
+        ) : ThoughtEvent
+    }
 }

@@ -62,15 +62,15 @@ class SettingsManager(context: Context) {
         get() = prefs.getString("default_main_model_path", "") ?: ""
         set(value) = prefs.edit().putString("default_main_model_path", value).apply()
 
-    var defaultOrchestratorModelPath: String
-        get() = prefs.getString("default_orchestrator_model_path", "") ?: ""
-        set(value) = prefs.edit().putString("default_orchestrator_model_path", value).apply()
+    var defaultRouterModelPath: String
+        get() = prefs.getString("default_router_model_path", prefs.getString("default_orchestrator_model_path", "")) ?: ""
+        set(value) = prefs.edit().putString("default_router_model_path", value).apply()
 
     var mainHardwareBackend: String
         get() = prefs.getString("main_hardware_backend", "Auto") ?: "Auto"
         set(value) = prefs.edit().putString("main_hardware_backend", value).apply()
 
-    var orchestratorHardwareBackend: String
-        get() = prefs.getString("orchestrator_hardware_backend", "CPU") ?: "CPU"
-        set(value) = prefs.edit().putString("orchestrator_hardware_backend", value).apply()
+    var routerHardwareBackend: String
+        get() = prefs.getString("router_hardware_backend", prefs.getString("orchestrator_hardware_backend", "CPU")) ?: "CPU"
+        set(value) = prefs.edit().putString("router_hardware_backend", value).apply()
 }

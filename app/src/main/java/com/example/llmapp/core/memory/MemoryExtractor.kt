@@ -50,7 +50,7 @@ class MemoryExtractor(
                 var rawResponse: String? = null
                 for (attempt in 1..2) {
                     try {
-                        rawResponse = llmInferenceManager.generateOrchestratorResponse(prompt)
+                        rawResponse = llmInferenceManager.generateRouterResponse(prompt)
                         break
                     } catch (e: Exception) {
                         Log.w(TAG, "Extraction attempt $attempt failed: ${e.message}")

@@ -56,7 +56,7 @@ class MemorySummarizer {
         """.trimIndent()
 
         return try {
-            val result = llm.generateOrchestratorResponse(prompt).trim()
+            val result = llm.generateRouterResponse(prompt).trim()
             val capped = result.take(MAX_SUMMARY_CHARS)
             Log.d(TAG, "Summarized ${memories.size} facts → ${capped.length} chars")
             capped

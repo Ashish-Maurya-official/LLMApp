@@ -162,7 +162,7 @@ class ChatHistoryManager(val context: Context) {
                     // Legacy: plain string → migrate to ThoughtItem
                     com.example.llmapp.core.runtime.ThoughtItem(
                         id = java.util.UUID.randomUUID().toString(),
-                        source = com.example.llmapp.core.runtime.ThoughtSource.ORCHESTRATOR,
+                        source = com.example.llmapp.core.runtime.ThoughtSource.ROUTER,
                         title = item,
                         updates = emptyList(),
                         state = com.example.llmapp.core.runtime.ThoughtState.COMPLETED,

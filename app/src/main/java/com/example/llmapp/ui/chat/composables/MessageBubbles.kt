@@ -255,8 +255,9 @@ private fun AnimatedThinkingText(text: String) {
 
 /** Human-readable display name for each ThoughtSource */
 private fun ThoughtSource.displayName(): String = when (this) {
-    ThoughtSource.ORCHESTRATOR -> "Planner"
+    ThoughtSource.ROUTER -> "Router"
     ThoughtSource.MEMORY -> "Memory"
+    ThoughtSource.RAG -> "RAG"
     ThoughtSource.WEB_SEARCH -> "Web"
     ThoughtSource.TOOL_EXECUTOR -> "Tools"
     ThoughtSource.CONTEXT_COMPOSER -> "Engine"

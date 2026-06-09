@@ -83,14 +83,27 @@ class MainActivity : ComponentActivity() {
             searchPreferences, secureSearchStorage
         )
         viewModel.searchOrchestrator = orchestrator
-        viewModel.cognitiveTaskScheduler.workers = listOf(
-            com.example.llmapp.core.search.WebSearchAgent(orchestrator)
+        val webSearchAgent = com.example.llmapp.core.search.WebSearchAgent(orchestrator)
+        viewModel.cognitiveTaskScheduler.workers = listOf(webSearchAgent)
+        
+        // Phase 5: Initialize New Routing Architecture
+        val toolRegistry = com.example.llmapp.core.tools.ToolRegistry().apply {
+            register(com.example.llmapp.core.tools.Tool.WebSearch, webSearchAgent)
+        }
+        val router = com.example.llmapp.core.routing.FunctionGemmaRouter(
+            llmInferenceManager,
+            toolRegistry
         )
+        viewModel.cognitiveTaskScheduler.toolRegistry = toolRegistry
+        viewModel.cognitiveTaskScheduler.router = router
+        
         viewModel.cognitiveTaskScheduler.memoryExtractor = com.example.llmapp.core.memory.MemoryExtractor(
             historyManager.database.memoryDao(),
             llmInferenceManager,
             settingsManager
         )
+        viewModel.cognitiveTaskScheduler.ragRetriever = com.example.llmapp.core.rag.RagRetriever()
+        viewModel.routingEvaluator = com.example.llmapp.core.evaluation.RoutingEvaluator(this, router)
         
         profileViewModel = com.example.llmapp.ui.profile.ProfileViewModel(historyManager.database.memoryDao())
 
@@ -112,9 +125,9 @@ class MainActivity : ComponentActivity() {
         // Schedule the Cognitive Sleep Cycle (WorkManager)
         com.example.llmapp.core.sleep.SleepCycleScheduler.scheduleSleepCycle(this)
 
-        // Auto-load Orchestrator model only. Main model loads dynamically on demand.
-        if (settingsManager.defaultOrchestratorModelPath.isNotBlank()) {
-            viewModel.processIntent(ChatIntent.LoadModel(settingsManager.defaultOrchestratorModelPath, true))
+        // Auto-load Router model only. Main model loads dynamically on demand.
+        if (settingsManager.defaultRouterModelPath.isNotBlank()) {
+            viewModel.processIntent(ChatIntent.LoadModel(settingsManager.defaultRouterModelPath, true))
         }
 
         setContent {
@@ -267,7 +280,7 @@ class MainActivity : ComponentActivity() {
                                     onModelSelectedWithBackend = { path, isOrch, backend ->
                                         // Save the selected backend to settings before loading
                                         if (isOrch) {
-                                            settingsManager.orchestratorHardwareBackend = backend
+                                            settingsManager.routerHardwareBackend = backend
                                         } else {
                                             settingsManager.mainHardwareBackend = backend
                                         }
@@ -283,9 +296,9 @@ class MainActivity : ComponentActivity() {
                                     onOpenEvaluation = { navController.navigate("evaluation") },
                                     settingsManager = settingsManager,
                                     isMainModelLoaded = llmInferenceManager.isMainModelLoaded,
-                                    isOrchestratorLoaded = llmInferenceManager.isOrchestratorLoaded,
+                                    isRouterLoaded = llmInferenceManager.isRouterLoaded,
                                     activeMainBackend = llmInferenceManager.activeMainBackend,
-                                    activeOrchestratorBackend = llmInferenceManager.activeOrchestratorBackend,
+                                    activeRouterBackend = llmInferenceManager.activeRouterBackend,
                                     isLoadingModel = uiState.isLoadingModel,
                                     loadError = uiState.errorMessage,
                                     loadStatus = uiState.status,
@@ -298,6 +311,7 @@ class MainActivity : ComponentActivity() {
                                 viewModel.evaluationRunner?.let { runner ->
                                     com.example.llmapp.ui.evaluation.EvaluationScreen(
                                         runner = runner,
+                                        routingEvaluator = viewModel.routingEvaluator,
                                         onBack = { navController.popBackStack() }
                                     )
                                 }
@@ -340,7 +354,7 @@ class MainActivity : ComponentActivity() {
                 }
         }
     }
-    private fun initModel(path: String, isOrchestrator: Boolean) {
-        viewModel.processIntent(ChatIntent.LoadModel(path, isOrchestrator))
+    private fun initModel(path: String, isRouter: Boolean) {
+        viewModel.processIntent(ChatIntent.LoadModel(path, isRouter))
     }
 }

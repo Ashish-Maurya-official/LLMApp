@@ -1,0 +1,52 @@
+[
+  {
+    "query": "hi",
+    "expected_intent": "greeting",
+    "expected_tools": false
+  },
+  {
+    "query": "hello",
+    "expected_intent": "greeting",
+    "expected_tools": false
+  },
+  {
+    "query": "search for the latest news on AI",
+    "expected_intent": "tool_web_search",
+    "expected_tools": true
+  },
+  {
+    "query": "can you turn on the flashlight",
+    "expected_intent": "tool_flashlight",
+    "expected_tools": true
+  },
+  {
+    "query": "what is my name",
+    "expected_intent": "memory_recall",
+    "expected_tools": false
+  },
+  {
+    "query": "remember that I like to code in kotlin",
+    "expected_intent": "personal_info",
+    "expected_tools": false
+  },
+  {
+    "query": "what is the weather like today?",
+    "expected_intent": "tool_weather",
+    "expected_tools": true
+  },
+  {
+    "query": "calculate 25 * 4",
+    "expected_intent": "tool_calculator",
+    "expected_tools": true
+  },
+  {
+    "query": "i am feeling very tired today",
+    "expected_intent": "chat",
+    "expected_tools": false
+  },
+  {
+    "query": "should i buy a new macbook?",
+    "expected_intent": "chat",
+    "expected_tools": false
+  }
+]

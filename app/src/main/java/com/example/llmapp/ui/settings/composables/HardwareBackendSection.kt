@@ -18,7 +18,7 @@ fun HardwareBackendSection(
     settingsManager: SettingsManager
 ) {
     var mainBackend by remember { mutableStateOf(settingsManager.mainHardwareBackend) }
-    var orchestratorBackend by remember { mutableStateOf(settingsManager.orchestratorHardwareBackend) }
+    var routerBackend by remember { mutableStateOf(settingsManager.routerHardwareBackend) }
     var isExpanded by remember { mutableStateOf(false) }
     
     val backendOptions = listOf("Auto", "GPU", "NPU", "CPU")
@@ -63,14 +63,14 @@ fun HardwareBackendSection(
                     
                     Spacer(modifier = Modifier.height(16.dp))
                     
-                    Text(text = "Orchestrator Model (Level 1)", style = MaterialTheme.typography.bodyMedium)
+                    Text(text = "Router Model (FunctionGemma)", style = MaterialTheme.typography.bodyMedium)
                     Spacer(modifier = Modifier.height(8.dp))
                     SettingsDropdown(
-                        selectedOption = orchestratorBackend,
+                        selectedOption = routerBackend,
                         options = backendOptions,
                         onOptionSelected = { selected ->
-                            orchestratorBackend = selected
-                            settingsManager.orchestratorHardwareBackend = selected
+                            routerBackend = selected
+                            settingsManager.routerHardwareBackend = selected
                         }
                     )
                 }

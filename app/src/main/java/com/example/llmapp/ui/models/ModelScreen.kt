@@ -43,16 +43,16 @@ fun ModelScreen(
     modelDownloader: ModelDownloader,
     onModelSelected: (String, Boolean) -> Unit,
     onModelUnloaded: (String, Boolean) -> Unit,
-    onModelSelectedWithBackend: (path: String, isOrchestrator: Boolean, backend: String) -> Unit,
+    onModelSelectedWithBackend: (path: String, isRouter: Boolean, backend: String) -> Unit,
     onClearError: () -> Unit,
     onClearFallback: () -> Unit,
     openDrawer: () -> Unit,
     onOpenEvaluation: () -> Unit,
     settingsManager: com.example.llmapp.core.settings.SettingsManager,
     isMainModelLoaded: Boolean,
-    isOrchestratorLoaded: Boolean,
+    isRouterLoaded: Boolean,
     activeMainBackend: String? = null,
-    activeOrchestratorBackend: String? = null,
+    activeRouterBackend: String? = null,
     isLoadingModel: Boolean = false,
     loadError: String? = null,
     loadStatus: String = "Ready",
@@ -67,15 +67,15 @@ fun ModelScreen(
     var catalogSource by remember { mutableStateOf("") }
 
     // State to trigger recomposition when loaded models change
-    var activeOrchestratorPath by remember { mutableStateOf(if (isOrchestratorLoaded) settingsManager.defaultOrchestratorModelPath else "") }
+    var activeRouterPath by remember { mutableStateOf(if (isRouterLoaded) settingsManager.defaultRouterModelPath else "") }
     var activeMainPath by remember { mutableStateOf(if (isMainModelLoaded) settingsManager.defaultMainModelPath else "") }
 
     // Sync paths when external load/unload state changes
     LaunchedEffect(isMainModelLoaded, activeMainBackend) {
         activeMainPath = if (isMainModelLoaded) settingsManager.defaultMainModelPath else ""
     }
-    LaunchedEffect(isOrchestratorLoaded, activeOrchestratorBackend) {
-        activeOrchestratorPath = if (isOrchestratorLoaded) settingsManager.defaultOrchestratorModelPath else ""
+    LaunchedEffect(isRouterLoaded, activeRouterBackend) {
+        activeRouterPath = if (isRouterLoaded) settingsManager.defaultRouterModelPath else ""
     }
 
     // Track per-model download progress (0..1), null = not downloading
@@ -434,7 +434,7 @@ fun ModelScreen(
 
             items(orchestratorModels, key = { it.fileName }) { model ->
                 val modelPath = modelDownloader.getDownloadedModelPath(model.fileName)
-                val isThisLoaded = modelPath != null && modelPath == activeOrchestratorPath
+                val isThisLoaded = modelPath != null && modelPath == activeRouterPath
 
                 ModelCard(
                     model = model,
@@ -468,9 +468,9 @@ fun ModelScreen(
                     onDelete = {
                         if (modelDownloader.deleteModel(model.fileName)) {
                             refreshDownloadedModels(models)
-                            if (modelPath != null && modelPath == settingsManager.defaultOrchestratorModelPath) {
-                                settingsManager.defaultOrchestratorModelPath = ""
-                                activeOrchestratorPath = ""
+                            if (modelPath != null && modelPath == settingsManager.defaultRouterModelPath) {
+                                settingsManager.defaultRouterModelPath = ""
+                                activeRouterPath = ""
                                 onModelUnloaded(modelPath, true)
                             }
                         }
@@ -481,21 +481,21 @@ fun ModelScreen(
                             if (isThisLoaded) {
                                 onModelUnloaded(path, true)
                             }
-                            settingsManager.defaultOrchestratorModelPath = path
-                            settingsManager.orchestratorHardwareBackend = backend
-                            activeOrchestratorPath = path
+                            settingsManager.defaultRouterModelPath = path
+                            settingsManager.routerHardwareBackend = backend
+                            activeRouterPath = path
                             onModelSelectedWithBackend(path, true, backend)
                         }
                     },
                     onUnload = {
                         modelPath?.let { path ->
-                            activeOrchestratorPath = ""
+                            activeRouterPath = ""
                             onModelUnloaded(path, true)
                         }
                     },
                     isLoaded = isThisLoaded,
-                    activeBackend = if (isThisLoaded) activeOrchestratorBackend else null,
-                    defaultBackend = settingsManager.orchestratorHardwareBackend
+                    activeBackend = if (isThisLoaded) activeRouterBackend else null,
+                    defaultBackend = settingsManager.routerHardwareBackend
                 )
             }
 

@@ -1,5 +1,39 @@
 package com.example.llmapp.core.orchestrator
 
+// ── FunctionGemma Router Output ──────────────────────────────────────────
+/**
+ * Multi-label routing decision from FunctionGemma 270M.
+ * The router NEVER answers users — it only classifies and routes.
+ *
+ * Multiple flags can be true simultaneously for compound queries:
+ *   "What did I work on at YMGrad and search for their latest updates?"
+ *   → needMemory=true, needTools=true, toolName="WEB_SEARCH"
+ *
+ * Dual confidence:
+ *   confidence         — how sure the router is about the route classification
+ *   reasoningConfidence — how sure it is about the reasoning (helps debug ambiguous queries)
+ */
+data class RoutingDecision(
+    val intent: String,                          // "memory_recall", "reminder", "education", "chat", etc.
+    val needMemory: Boolean = false,             // Should MemoryAgent recall context?
+    val needRag: Boolean = false,                // Should RAG search documents?
+    val needTools: Boolean = false,              // Should a tool be executed?
+    val toolName: String? = null,                // Which tool (if needTools=true)
+    val toolQuery: String? = null,               // Query/args for the tool
+    val needMemoryExtraction: Boolean = false,   // Extract new facts post-generation (via Gemma 4 E2B)
+    val confidence: Float = 0.0f,                // Route classification confidence (< 0.7 → fallback)
+    val reasoningConfidence: Float = 0.0f         // How sure about the reasoning behind the route
+) {
+    companion object {
+        /** Fallback when router times out, fails, or confidence is too low */
+        val CHAT_FALLBACK = RoutingDecision(
+            intent = "",
+            confidence = 0.0f,
+            reasoningConfidence = 0.0f
+        )
+    }
+}
+
 /**
  * Global cancellation token used to halt operations across all subsystems
  * (e.g., STT, Orchestrator, Tools, Main LLM, TTS) during a barge-in or stop event.
@@ -18,19 +52,7 @@ class CancellationToken {
     }
 }
 
-/**
- * Represents the structured JSON output from the Level 1 Cognitive Orchestrator.
- */
-data class CognitivePlan(
-    val intent: String,
-    val confidence: Float,
-    val cognitiveDepth: Int,
-    val tools: List<ToolRequest>,
-    val memoryPlan: MemoryPlan,
-    val memoryExtraction: MemoryExtractionPlan,
-    val rewrittenQuery: String
-)
-
+// ── Tool Request (used by ToolRegistry + CognitiveWorker) ────────────────
 data class ToolRequest(
     val name: String,
     val priority: Int,
@@ -38,35 +60,6 @@ data class ToolRequest(
     val query: String? = null,
     val parameters: Map<String, String>? = null
 )
-
-/**
- * Directs the background MemoryExtractor on whether to save new facts.
- */
-data class MemoryExtractionPlan(
-    val enabled: Boolean,
-    val confidence: Float,
-    val reason: String
-) {
-    companion object {
-        val DISABLED = MemoryExtractionPlan(enabled = false, confidence = 0f, reason = "none")
-    }
-}
-
-// ── Orchestrator defines WHAT, not HOW ───────────────────────────────────
-/**
- * The orchestrator's memory directive. It declares the objective and which
- * memory categories are relevant. The MemoryAgent decides how to retrieve.
- */
-data class MemoryPlan(
-    val enabled: Boolean,
-    val goal: String,               // "Find user's pet information"
-    val categories: List<String>,   // ["PROFILE", "SEMANTIC", "EPISODIC"]
-    val importance: Float           // 0-1 → controls retrieval budget + cost limit
-) {
-    companion object {
-        val DISABLED = MemoryPlan(enabled = false, goal = "", categories = emptyList(), importance = 0f)
-    }
-}
 
 // ── Memory Type with recall cost for budgeting ───────────────────────────
 enum class MemoryType(val recallCost: Int) {
@@ -130,10 +123,11 @@ data class MemoryResult(
     val summary: String,            // LLM-summarized (100 token budget)
     val rankedFacts: List<RankedMemory>,
     val conflicts: List<String>,    // "Evolution: X (2024) → Y (2026)"
+    val confidence: Float = 0.0f,   // Retrieval confidence: < 0.5 → ignore memories
     val isEmpty: Boolean = false
 ) {
     companion object {
-        val EMPTY = MemoryResult("", emptyList(), emptyList(), true)
+        val EMPTY = MemoryResult("", emptyList(), emptyList(), confidence = 0.0f, isEmpty = true)
     }
 
     fun toContextString(): String {
@@ -144,23 +138,6 @@ data class MemoryResult(
     }
 }
 
-/**
- * Execution Graph Nodes mapping
- */
-data class ExecutionNode(
-    val id: String,
-    val toolRequest: ToolRequest
-)
-
-data class Edge(
-    val fromNodeId: String,
-    val toNodeId: String
-)
-
-data class ExecutionGraph(
-    val nodes: List<ExecutionNode>,
-    val dependencies: List<Edge>
-)
 
 /**
  * State tracking for the continuous cognition runtime

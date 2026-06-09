@@ -76,7 +76,7 @@ class EpisodeGenerator(
                     {
                 """.trimIndent()
 
-                val result = llmInferenceManager.generateOrchestratorResponse(prompt)
+                val result = llmInferenceManager.generateRouterResponse(prompt)
                 val cleanJson = if (result.trim().startsWith("{")) result else "{$result"
                 val json = JSONObject(cleanJson.replace(Regex("```json|```"), "").trim())
 

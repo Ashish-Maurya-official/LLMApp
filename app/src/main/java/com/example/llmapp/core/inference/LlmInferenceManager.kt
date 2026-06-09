@@ -70,30 +70,28 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     var activeMainBackend: String? = null
         private set
     
-    // ── Cognitive Orchestrator Engine (Level 1) ──────────────────────────────
-    private var orchestratorEngine: Engine? = null
-    private var orchestratorConversation: Conversation? = null
-    val isOrchestratorLoaded: Boolean
-        get() = orchestratorEngine != null
-    var activeOrchestratorBackend: String? = null
+    // ── FunctionGemma Router Engine ────────────────────────────────────────────
+    private var routerEngine: Engine? = null
+    private var routerConversation: Conversation? = null
+    val isRouterLoaded: Boolean
+        get() = routerEngine != null
+    var activeRouterBackend: String? = null
         private set
 
     private val _outputFlow = MutableSharedFlow<Triple<String, Boolean, String>>(extraBufferCapacity = 64)
     val outputFlow: SharedFlow<Triple<String, Boolean, String>> = _outputFlow
     
     // Dedicated Single-Thread Executors for each engine to prevent CPU contention and UI jank
-    private val orchestratorDispatcher = Executors.newSingleThreadExecutor { Thread(it, "Orchestrator-Thread") }.asCoroutineDispatcher()
+    private val routerDispatcher = Executors.newSingleThreadExecutor { Thread(it, "Router-Thread") }.asCoroutineDispatcher()
     private val mainEngineDispatcher = Executors.newSingleThreadExecutor { Thread(it, "MainEngine-Thread") }.asCoroutineDispatcher()
 
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private val inferenceMutex = Mutex()
-    private val orchestratorMutex = Mutex()
+    private val routerMutex = Mutex()
     
-    // FIX(BUG 7): Separate generation jobs for main and orchestrator engines
-    // Previously a single `currentGenerationJob` was shared — starting main inference
-    // would cancel an active orchestrator job and vice versa.
+    // Separate generation jobs for main and router engines
     private var mainGenerationJob: Job? = null
-    private var orchestratorGenerationJob: Job? = null
+    private var routerGenerationJob: Job? = null
 
     // ── Main Model Loading ────────────────────────────────────────────────────
     suspend fun loadMainModel(modelPath: String, hardwareBackend: String = "Auto"): LoadResult {
@@ -148,54 +146,51 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         }
     }
 
-    // ── Orchestrator Model Loading (CPU typically) ───────────────────────────
-    suspend fun loadOrchestratorModel(modelPath: String, hardwareBackend: String = "CPU"): LoadResult {
+    // ── Router Model Loading (FunctionGemma 270M, CPU typically) ──────────────
+    suspend fun loadRouterModel(modelPath: String, hardwareBackend: String = "CPU"): LoadResult {
         return withContext(Dispatchers.IO) {
-            orchestratorMutex.withLock {
-                Log.d(TAG, "[LOAD_ORCHESTRATOR] Requested backend: $hardwareBackend")
+            routerMutex.withLock {
+                Log.d(TAG, "[LOAD_ROUTER] Requested backend: $hardwareBackend")
                 
-                // FIX(BUG 4): Close Conversation BEFORE Engine
-                Log.d(TAG, "[LOAD_ORCHESTRATOR] Closing old orchestrator conversation...")
-                safeCloseConversation(orchestratorConversation, "orchestrator")
-                orchestratorConversation = null
-                Log.d(TAG, "[LOAD_ORCHESTRATOR] Closing old orchestrator engine...")
-                safeCloseEngine(orchestratorEngine, "orchestrator")
-                orchestratorEngine = null
+                Log.d(TAG, "[LOAD_ROUTER] Closing old router conversation...")
+                safeCloseConversation(routerConversation, "router")
+                routerConversation = null
+                Log.d(TAG, "[LOAD_ROUTER] Closing old router engine...")
+                safeCloseEngine(routerEngine, "router")
+                routerEngine = null
                 
-                // FIX(BUG 5): Use delay() instead of Thread.sleep()
-                Log.d(TAG, "[LOAD_ORCHESTRATOR] Forcing GC and waiting for resource release...")
+                Log.d(TAG, "[LOAD_ROUTER] Forcing GC and waiting for resource release...")
                 System.gc()
                 delay(500)
                 
-                Log.d(TAG, "[LOAD_ORCHESTRATOR] Checking file existence for $modelPath...")
+                Log.d(TAG, "[LOAD_ROUTER] Checking file existence for $modelPath...")
                 val file = File(modelPath)
                 if (!file.exists()) throw IllegalArgumentException("Model file not found at $modelPath")
 
                 val resolvedBackend = resolveBackendPreference(hardwareBackend)
-                Log.d(TAG, "[LOAD_ORCHESTRATOR] Resolved backend: $hardwareBackend → $resolvedBackend")
+                Log.d(TAG, "[LOAD_ROUTER] Resolved backend: $hardwareBackend → $resolvedBackend")
 
                 val (backendName, fallbackError) = loadEngineWithFallback(modelPath, resolvedBackend, 4) { eng, conv ->
-                    orchestratorEngine = eng
-                    orchestratorConversation = conv
+                    routerEngine = eng
+                    routerConversation = conv
                 }
-                activeOrchestratorBackend = backendName
-                Log.d(TAG, "[LOAD_ORCHESTRATOR] ✅ Loaded ORCHESTRATOR model successfully with $backendName")
+                activeRouterBackend = backendName
+                Log.d(TAG, "[LOAD_ROUTER] ✅ Loaded ROUTER model successfully with $backendName")
                 LoadResult(backendName, fallbackError)
             }
         }
     }
 
-    suspend fun unloadOrchestratorModel() {
+    suspend fun unloadRouterModel() {
         withContext(Dispatchers.IO) {
-            orchestratorMutex.withLock {
-                // FIX(BUG 4): Close Conversation BEFORE Engine
-                safeCloseConversation(orchestratorConversation, "orchestrator")
-                orchestratorConversation = null
-                safeCloseEngine(orchestratorEngine, "orchestrator")
-                orchestratorEngine = null
-                activeOrchestratorBackend = null
+            routerMutex.withLock {
+                safeCloseConversation(routerConversation, "router")
+                routerConversation = null
+                safeCloseEngine(routerEngine, "router")
+                routerEngine = null
+                activeRouterBackend = null
                 System.gc()
-                Log.d("LlmInferenceManager", "Unloaded ORCHESTRATOR model successfully")
+                Log.d(TAG, "Unloaded ROUTER model successfully")
             }
         }
     }
@@ -412,47 +407,54 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
 
     fun stopGeneration() {
         mainGenerationJob?.cancel()
-        orchestratorGenerationJob?.cancel()
-        Log.d("LlmInferenceManager", "Generation stopped by user/system.")
+        routerGenerationJob?.cancel()
+        Log.d(TAG, "Generation stopped by user/system.")
     }
 
-    // ── Orchestrator Inference (Synchronous → Suspend) ───────────────────────
-    // FIX(BUG 6): Changed from `runBlocking` to `suspend fun`.
-    // `runBlocking` was blocking the 4-thread agentDispatcher pool in
-    // CognitiveTaskScheduler, risking deadlock during long inference calls.
-    suspend fun generateOrchestratorResponse(prompt: String): String {
-        return orchestratorMutex.withLock {
-            val eng = orchestratorEngine ?: throw java.lang.IllegalStateException("Orchestrator Engine not loaded")
-            // Always reset conversation for orchestrator to avoid context creep
-            safeCloseConversation(orchestratorConversation, "orchestrator")
+    // ── Router Inference (Synchronous) ─────────────────────────────────────────
+    /**
+     * Synchronous router inference for FunctionGemma 270M.
+     * Used for:
+     *   1. Routing decisions (JSON classification)
+     *   2. Memory extraction (structured fact extraction)
+     *
+     * Always resets conversation to prevent context creep between calls.
+     */
+    suspend fun generateRouterResponse(prompt: String): String {
+        return routerMutex.withLock {
+            val eng = routerEngine ?: throw IllegalStateException("Router Engine not loaded")
+            safeCloseConversation(routerConversation, "router")
             val freshConv = eng.createConversation()
-            orchestratorConversation = freshConv
+            routerConversation = freshConv
             
-            // Run the blocking inference call on the dedicated orchestrator thread
-            withContext(orchestratorDispatcher) {
+            withContext(routerDispatcher) {
                 freshConv.sendMessage(prompt).toString()
             }
         }
     }
 
-    // FIX(BUG 7): Uses separate `orchestratorGenerationJob` instead of shared `currentGenerationJob`
-    fun generateOrchestratorResponseAsync(prompt: String, generationId: String) {
-        val oldJob = orchestratorGenerationJob
-        orchestratorGenerationJob = scope.launch(orchestratorDispatcher) {
+    /**
+     * Async streaming generation on the router engine.
+     * Used as fallback when the main model is unavailable — the router
+     * can answer simple queries in a degraded mode.
+     */
+    fun generateRouterResponseAsync(prompt: String, generationId: String) {
+        val oldJob = routerGenerationJob
+        routerGenerationJob = scope.launch(routerDispatcher) {
             try { oldJob?.cancelAndJoin() } catch (e: Exception) {}
             
-            val freshConv = orchestratorMutex.withLock {
+            val freshConv = routerMutex.withLock {
                 delay(200)
-                val eng = orchestratorEngine
+                val eng = routerEngine
                 if (eng != null) {
-                    safeCloseConversation(orchestratorConversation, "orchestrator")
-                    orchestratorConversation = eng.createConversation()
+                    safeCloseConversation(routerConversation, "router")
+                    routerConversation = eng.createConversation()
                 }
-                orchestratorConversation
+                routerConversation
             }
             
             if (freshConv == null) {
-                _outputFlow.emit(Triple("Error: Orchestrator Model not initialized", true, generationId))
+                _outputFlow.emit(Triple("Error: Router Model not initialized", true, generationId))
                 return@launch
             }
 
@@ -469,7 +471,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                         _outputFlow.emit(Triple(chunk.toString(), false, generationId))
                     }
             } catch (t: Throwable) {
-                android.util.Log.e("LlmInferenceManager", "Orchestrator Async Generation error", t)
+                Log.e(TAG, "Router Async Generation error", t)
                 if (!completionEmitted) {
                     completionEmitted = true
                     _outputFlow.emit(Triple("Error: ${t.message}", true, generationId))
@@ -542,17 +544,16 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         }
     }
 
-    // FIX(BUG 4): Correct resource cleanup order — Conversation before Engine
     fun close() {
         safeCloseConversation(mainConversation, "main")
         mainConversation = null
         safeCloseEngine(mainEngine, "main")
         mainEngine = null
         
-        safeCloseConversation(orchestratorConversation, "orchestrator")
-        orchestratorConversation = null
-        safeCloseEngine(orchestratorEngine, "orchestrator")
-        orchestratorEngine = null
+        safeCloseConversation(routerConversation, "router")
+        routerConversation = null
+        safeCloseEngine(routerEngine, "router")
+        routerEngine = null
         
         scope.cancel()
     }

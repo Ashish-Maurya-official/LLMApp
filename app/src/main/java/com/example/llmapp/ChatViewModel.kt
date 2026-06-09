@@ -256,7 +256,7 @@ class ChatViewModel : ViewModel() {
     }
 
     var evaluationRunner: com.example.llmapp.core.evaluation.EvaluationRunner? = null
-        private set
+    var routingEvaluator: com.example.llmapp.core.evaluation.RoutingEvaluator? = null
 
     val intentThreadManager = com.example.llmapp.core.regulation.IntentThreadManager()
     val socioCognitiveRegulator = com.example.llmapp.core.regulation.SocioCognitiveRegulator()
@@ -384,6 +384,43 @@ class ChatViewModel : ViewModel() {
         when (event) {
             is com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.TokenEmitted -> {
                 val newRaw = _streamingState.value.rawContent + event.token
+
+                // ── Sentinel Interception (Main Model requesting search) ──
+                val sentinelMatch = Regex("""\[SEARCH_NEEDED(?::\s*([^\]]+))?\]""").find(newRaw)
+                if (sentinelMatch != null && searchChainDepth < 1) {
+                    val extractedQuery = sentinelMatch.groupValues[1].trim()
+                    val finalQuery = extractedQuery.ifBlank { currentUserQuery }
+                    searchChainDepth++
+
+                    // Stop current generation completely (wipe partial)
+                    cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.StopGeneration(event.generationId))
+                    _streamingState.value = StreamingState()
+                    _uiState.update { it.copy(isGenerating = true, errorMessage = null) }
+
+                    val searchThoughtId = java.util.UUID.randomUUID().toString()
+                    cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtStarted(searchThoughtId, com.example.llmapp.core.runtime.ThoughtSource.TOOL_EXECUTOR, "Searching web for: $finalQuery", event.generationId))
+
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                        val searchContext = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            val result = searchOrchestrator?.resolveSearch(finalQuery, forceSearch = true)
+                            if (result is com.example.llmapp.core.search.orchestration.OrchestratorResult.Success) {
+                                result.formattedContext
+                            } else null
+                        }
+
+                        if (searchContext != null) {
+                            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtCompleted(searchThoughtId, "Web search successful", event.generationId))
+                            val extraPrompt = "\n[System: Here is real-time web context to help you answer the user's query:]\n$searchContext\n"
+                            triggerGeneration(extraPrompt)
+                        } else {
+                            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.ThoughtEvent.ThoughtCompleted(searchThoughtId, "Web search failed", event.generationId))
+                            val extraPrompt = "\n[System: The web search failed. Inform the user that you couldn't search the web and try to answer with your existing knowledge.]\n"
+                            triggerGeneration(extraPrompt)
+                        }
+                    }
+                    return
+                }
+
                 val parsed = parseStreamContent(newRaw)
 
                 // ── TTS forward ─────────────────────────────────────────────
@@ -576,17 +613,17 @@ class ChatViewModel : ViewModel() {
                 _uiState.update { it.copy(isLoadingModel = true, errorMessage = null, fallbackMessage = null, fallbackErrorDetails = null) }
                 viewModelScope.launch {
                     try {
-                        if (intent.isOrchestrator) {
-                            val backendPref = settingsManager?.orchestratorHardwareBackend ?: "CPU"
-                            Log.d("ChatViewModel", "Loading orchestrator model: ${intent.path} with backend=$backendPref")
-                            val result = llmInferenceManager?.loadOrchestratorModel(intent.path, backendPref)
+                        if (intent.isRouter) {
+                            val backendPref = settingsManager?.routerHardwareBackend ?: "CPU"
+                            Log.d("ChatViewModel", "Loading router model: ${intent.path} with backend=$backendPref")
+                            val result = llmInferenceManager?.loadRouterModel(intent.path, backendPref)
                             val actualBackend = result?.backendName ?: "Unknown"
-                            Log.d("ChatViewModel", "Orchestrator loaded on $actualBackend (requested: $backendPref)")
+                            Log.d("ChatViewModel", "Router loaded on $actualBackend (requested: $backendPref)")
 
                             val fallback = detectFallback(backendPref, actualBackend, result)
                             _uiState.update { it.copy(
                                 isLoadingModel = false,
-                                status = "Orchestrator Loaded ($actualBackend)",
+                                status = "Router Loaded ($actualBackend)",
                                 fallbackMessage = fallback,
                                 fallbackErrorDetails = result?.errorDetails
                             ) }
@@ -629,9 +666,9 @@ class ChatViewModel : ViewModel() {
             is ChatIntent.UnloadModel -> {
                 viewModelScope.launch {
                     try {
-                        if (intent.isOrchestrator) {
-                            llmInferenceManager?.unloadOrchestratorModel()
-                            _uiState.update { it.copy(status = "Orchestrator Unloaded") }
+                        if (intent.isRouter) {
+                            llmInferenceManager?.unloadRouterModel()
+                            _uiState.update { it.copy(status = "Router Unloaded") }
                         } else {
                             llmInferenceManager?.unloadMainModel()
                             _uiState.update { it.copy(status = "Model Unloaded", activeBackend = null) }
@@ -736,8 +773,11 @@ class ChatViewModel : ViewModel() {
         _streamingState.value = StreamingState()
         _uiState.update { it.copy(isGenerating = true, errorMessage = null) }
 
+        triggerGeneration()
+    }
+
+    private fun triggerGeneration(extraSystemContext: String = "") {
         val genId = java.util.UUID.randomUUID().toString()
-        
         viewModelScope.launch(Dispatchers.Default) {
             val pacingDelay = socioCognitiveRegulator.calculatePacingDelayMs()
             if (pacingDelay > 0) {
@@ -748,7 +788,7 @@ class ChatViewModel : ViewModel() {
             val mgr = settingsManager
             val customPrompt = mgr?.systemPrompt ?: ""
             val regulatoryPrompt = socioCognitiveRegulator.generateRegulatoryPrompt()
-            val antiDependencyPrompt = identityAnchorManager?.checkAntiDependencyProtocol(text) ?: ""
+            val antiDependencyPrompt = identityAnchorManager?.checkAntiDependencyProtocol(currentUserQuery) ?: ""
             
             val suspended = intentThreadManager.popNextIntent()
             val suspendedPrompt = if (suspended != null) {
@@ -760,7 +800,7 @@ class ChatViewModel : ViewModel() {
             if (activeDegradationLevel < com.example.llmapp.core.runtime.CognitiveEvent.DegradationLevel.REDUCED_RETRIEVAL) {
                 val memories = runCatching {
                     withContext(Dispatchers.IO) {
-                        hybridRetriever?.retrieveRelevance(text) ?: emptyList()
+                        hybridRetriever?.retrieveRelevance(currentUserQuery) ?: emptyList()
                     }
                 }.getOrElse { emptyList() }
                 if (memories.isNotEmpty()) {
@@ -769,7 +809,7 @@ class ChatViewModel : ViewModel() {
                 }
             }
             
-            val systemPromptOverride = customPrompt + "\n" + regulatoryPrompt + "\n" + antiDependencyPrompt + "\n" + suspendedPrompt + "\n" + sbMemories.toString()
+            val systemPromptOverride = customPrompt + "\n" + regulatoryPrompt + "\n" + antiDependencyPrompt + "\n" + suspendedPrompt + "\n" + sbMemories.toString() + "\n" + extraSystemContext
             
             val ctx = com.example.llmapp.core.prompts.models.PromptContext(
                 systemPromptOverride = systemPromptOverride,
@@ -782,8 +822,8 @@ class ChatViewModel : ViewModel() {
                 perMessageCap = perMessageCharCap()
             )
             
-            val prompt = com.example.llmapp.core.prompts.PromptPipeline.buildNormalPrompt(text, allMessages, ctx)
-            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(text, prompt, genId))
+            val prompt = com.example.llmapp.core.prompts.PromptPipeline.buildNormalPrompt(currentUserQuery, allMessages, ctx)
+            cognitiveTaskScheduler.emit(com.example.llmapp.core.runtime.CognitiveEvent.RuntimeEvent.GenerationRequested(currentUserQuery, prompt, genId))
         }
     }
 

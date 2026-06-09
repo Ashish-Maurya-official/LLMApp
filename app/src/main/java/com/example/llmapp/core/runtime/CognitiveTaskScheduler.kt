@@ -36,6 +36,10 @@ data class IntrospectionData(
  */
 class CognitiveTaskScheduler(private val scope: CoroutineScope) {
 
+    companion object {
+        private const val TAG = "CognitiveTaskScheduler"
+    }
+
     // Dedicated Thread Pool for multi-agent I/O and routing operations to avoid UI/Main contention
     private val agentDispatcher = Executors.newFixedThreadPool(4) { Thread(it, "Agent-Thread") }.asCoroutineDispatcher()
 
@@ -48,6 +52,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
     var settingsManager: com.example.llmapp.core.settings.SettingsManager? = null
     var memoryAgent: com.example.llmapp.core.memory.MemoryAgent? = null
     var memoryExtractor: com.example.llmapp.core.memory.MemoryExtractor? = null
+    var ragRetriever: com.example.llmapp.core.rag.RagRetriever? = null
     var workers: List<CognitiveWorker> = emptyList()
 
     var llmInferenceManager: com.example.llmapp.core.inference.LlmInferenceManager? = null
@@ -105,9 +110,12 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
         }
     }
 
+    var router: com.example.llmapp.core.routing.FunctionGemmaRouter? = null
+    var toolRegistry: com.example.llmapp.core.tools.ToolRegistry? = null
+
     private data class GenerationContext(
         val generationId: String,
-        val memoryExtractionPlan: com.example.llmapp.core.orchestrator.MemoryExtractionPlan?
+        val needMemoryExtraction: Boolean
     )
     
     private val generationContexts = mutableMapOf<String, GenerationContext>()
@@ -125,7 +133,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
     fun emit(event: CognitiveEvent) {
         val success = _events.tryEmit(event)
         if (!success) {
-            Log.e("CognitiveTaskScheduler", "Failed to emit event: $event")
+            Log.e(TAG, "Failed to emit event: $event")
         }
     }
 
@@ -136,185 +144,220 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
     private suspend fun processEvent(event: CognitiveEvent) {
         when (event) {
             is CognitiveEvent.RuntimeEvent.GenerationRequested -> {
-                Log.d("CognitiveTaskScheduler", "Generation Requested: ${event.generationId}")
+                Log.d(TAG, "Generation Requested: ${event.generationId}")
                 _state.value = _state.value.copy(activeGenerationId = event.generationId, phase = ExecutionPhase.GENERATING, currentQuery = event.rawQuery)
                 tokenBuffer.clear()
                 activeJob?.cancel()
-                val cancellationToken = com.example.llmapp.core.orchestrator.CancellationToken()
 
-                // Execute the agent and routing logic on the dedicated thread pool
                 activeJob = scope.launch(agentDispatcher) {
                     telemetry.onConversationReset()
                     telemetry.onGenerationRequested()
                     
                     try {
-                        // LEVEL 1: Orchestrator LLM
-                        _state.value = _state.value.copy(phase = ExecutionPhase.PLANNING)
-                        val planThoughtId = java.util.UUID.randomUUID().toString()
-                        emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(planThoughtId, ThoughtSource.ORCHESTRATOR, "Planning response", event.generationId))
+                        // ── STEP 1: Route via FunctionGemma (< 1 second, CPU) ────────────
+                        _state.value = _state.value.copy(phase = ExecutionPhase.ROUTING)
+                        val routeThoughtId = UUID.randomUUID().toString()
+                        emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(routeThoughtId, ThoughtSource.ROUTER, "Routing query", event.generationId))
                         
-                        val orchestratorPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorPrompt(event.rawQuery)
-                        val orchestratorJson = try {
-                            llmInferenceManager?.generateOrchestratorResponse(orchestratorPrompt) ?: "{}"
-                        } catch (e: Throwable) {
-                            Log.w("CognitiveTaskScheduler", "Orchestrator inference failed: ${e.message}", e)
-                            "{}"
-                        }
+                        val decision = router?.route(event.rawQuery)
+                            ?: com.example.llmapp.core.orchestrator.RoutingDecision.CHAT_FALLBACK
                         
-                        if (cancellationToken.isCancelled) return@launch
+                        Log.d(TAG, "Routing Decision: intent=${decision.intent}, memory=${decision.needMemory}, " +
+                                "tools=${decision.needTools}, tool=${decision.toolName}, " +
+                                "extraction=${decision.needMemoryExtraction}, " +
+                                "conf=${decision.confidence}, reasonConf=${decision.reasoningConfidence}")
                         
-                        val plan = com.example.llmapp.core.inference.ExecutionGraph.parseCognitivePlan(orchestratorJson, event.rawQuery)
-                        
-                        // Save Generation Context for post-generation background tasks
+                        emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(routeThoughtId, 
+                            "Route: ${decision.intent} (${String.format("%.0f", decision.confidence * 100)}%)", event.generationId))
+
+                        // Save context for post-generation extraction
                         generationContexts[event.generationId] = GenerationContext(
                             generationId = event.generationId,
-                            memoryExtractionPlan = plan.memoryExtraction
+                            needMemoryExtraction = decision.needMemoryExtraction
                         )
+
+                        // ── STEP 2: Parallel retrieval based on boolean flags ────────────
                         
-                        emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(planThoughtId, "Response planned", event.generationId))
-                        
-                        // ── PARALLEL COGNITIVE PROCESSES ──────────────────────────────
-                        
-                        // 1. Memory Recall (internal cognition — runs in parallel with tools)
+                        // 2a. Memory Recall (if needMemory=true)
                         var memoryThoughtId: String? = null
-                        val memoryDeferred = if (plan.memoryPlan.enabled) {
-                            memoryThoughtId = java.util.UUID.randomUUID().toString()
-                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(memoryThoughtId!!, ThoughtSource.MEMORY, "Recalling: ${plan.memoryPlan.goal}", event.generationId))
+                        val memoryDeferred = if (decision.needMemory) {
+                            memoryThoughtId = UUID.randomUUID().toString()
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(memoryThoughtId!!, ThoughtSource.MEMORY, "Recalling memories", event.generationId))
                             async {
-                                // Wire the MemoryAgent's thoughtEmitter to ThoughtUpdated events
                                 memoryAgent?.thoughtEmitter = { content ->
                                     emit(CognitiveEvent.ThoughtEvent.ThoughtUpdated(
                                         memoryThoughtId!!, content, generationId = event.generationId
                                     ))
                                 }
-                                val budget = budgetFromImportance(plan.memoryPlan.importance)
-                                val costBudget = costBudgetFromImportance(plan.memoryPlan.importance)
                                 val goal = com.example.llmapp.core.orchestrator.MemoryGoal(
-                                    objective = plan.memoryPlan.goal,
-                                    categories = plan.memoryPlan.categories
-                                        .mapNotNull { com.example.llmapp.core.orchestrator.MemoryType.fromString(it) }
-                                        .toSet()
-                                        .ifEmpty { setOf(com.example.llmapp.core.orchestrator.MemoryType.SEMANTIC, com.example.llmapp.core.orchestrator.MemoryType.PROFILE) },
+                                    objective = event.rawQuery,
+                                    categories = setOf(
+                                        com.example.llmapp.core.orchestrator.MemoryType.PROFILE,
+                                        com.example.llmapp.core.orchestrator.MemoryType.SEMANTIC
+                                    ),
                                     originalQuery = event.rawQuery,
-                                    maxResults = budget,
-                                    costBudget = costBudget
+                                    maxResults = 8,
+                                    costBudget = 10
                                 )
                                 try {
                                     memoryAgent?.recall(goal) ?: com.example.llmapp.core.orchestrator.MemoryResult.EMPTY
                                 } catch (e: Exception) {
-                                    Log.w("CognitiveTaskScheduler", "MemoryAgent recall failed: ${e.message}")
+                                    Log.w(TAG, "MemoryAgent recall failed: ${e.message}")
                                     com.example.llmapp.core.orchestrator.MemoryResult.EMPTY
                                 } finally {
                                     memoryAgent?.thoughtEmitter = null
                                 }
                             }
                         } else null
-
-                        // 2. Tool Execution (external actions)
-                        var toolThoughtId: String? = null
-                        val toolResults = mutableMapOf<String, String>()
-                        if (plan.tools.isNotEmpty() && plan.tools[0].name != "NONE") {
+                        
+                        // 2b. RAG Retrieval (if needRag=true)
+                        var ragThoughtId: String? = null
+                        val ragDeferred = if (decision.needRag && ragRetriever != null) {
                             _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
-                            toolThoughtId = java.util.UUID.randomUUID().toString()
-                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(toolThoughtId, ThoughtSource.TOOL_EXECUTOR, "Executing: ${plan.tools.joinToString { it.name }}", event.generationId))
+                            ragThoughtId = UUID.randomUUID().toString()
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(ragThoughtId, ThoughtSource.RAG, "Searching documents for: ${event.rawQuery}", event.generationId))
                             
-                            val deferredResults = plan.tools.map { tool ->
-                                async {
-                                    val worker = workers.find { it.name == tool.name }
-                                    worker?.execute(tool)?.let { workerResult ->
-                                        when (workerResult) {
-                                            is WorkerResult.Success -> workerResult.result
-                                            is WorkerResult.Error -> "Tool ${tool.name} failed: ${workerResult.error}"
-                                            is WorkerResult.Skipped -> "Tool ${tool.name} skipped."
-                                        }
-                                    } ?: "Tool ${tool.name} not found."
+                            async(Dispatchers.IO) {
+                                try {
+                                    ragRetriever?.retrieve(event.rawQuery) ?: com.example.llmapp.core.rag.RagResult.EMPTY
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "RagRetriever failed: ${e.message}")
+                                    com.example.llmapp.core.rag.RagResult.EMPTY
                                 }
                             }
+                        } else null
+
+                        // 2c. Tool Execution (if needTools=true)
+                        var toolThoughtId: String? = null
+                        val toolResults = mutableMapOf<String, String>()
+                        if (decision.needTools && decision.toolName != null) {
+                            _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
+                            toolThoughtId = UUID.randomUUID().toString()
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(toolThoughtId, ThoughtSource.TOOL_EXECUTOR, "Executing: ${decision.toolName}", event.generationId))
                             
-                            deferredResults.forEachIndexed { index, deferred ->
-                                toolResults[plan.tools[index].name] = deferred.await()
+                            val worker = toolRegistry?.resolve(decision.toolName) 
+                                ?: workers.find { it.name == decision.toolName }
+                            
+                            if (worker != null) {
+                                val toolRequest = com.example.llmapp.core.orchestrator.ToolRequest(
+                                    name = decision.toolName,
+                                    priority = 1,
+                                    required = true,
+                                    query = decision.toolQuery ?: event.rawQuery
+                                )
+                                val result = async { worker.execute(toolRequest) }.await()
+                                when (result) {
+                                    is WorkerResult.Success -> toolResults[decision.toolName] = result.result
+                                    is WorkerResult.Error -> toolResults[decision.toolName] = "Tool ${decision.toolName} failed: ${result.error}"
+                                    is WorkerResult.Skipped -> toolResults[decision.toolName] = "Tool ${decision.toolName} skipped."
+                                }
+                            } else {
+                                toolResults[decision.toolName] = "Tool ${decision.toolName} not available."
                             }
-                            emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(toolThoughtId, "Tools completed", event.generationId))
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(toolThoughtId, "Tool completed", event.generationId))
                         }
 
-                        // Await memory result
+                        // ── STEP 3: Await memory + apply confidence gate ─────────────────
                         val memoryResult = memoryDeferred?.await() ?: com.example.llmapp.core.orchestrator.MemoryResult.EMPTY
-                        val memoryContext = memoryResult.toContextString()
+                        val memoryContext = if (memoryResult.confidence >= 0.5f) {
+                            memoryResult.toContextString()
+                        } else {
+                            if (!memoryResult.isEmpty) {
+                                Log.d(TAG, "Memory confidence too low (${memoryResult.confidence}), discarding ${memoryResult.rankedFacts.size} results")
+                            }
+                            ""
+                        }
+                        
+                        val ragResult = ragDeferred?.await() ?: com.example.llmapp.core.rag.RagResult.EMPTY
+                        val ragContext = ragResult.toContextString()
+                        
+                        if (ragThoughtId != null) {
+                            val ragSummary = if (!ragResult.isEmpty) {
+                                "Found ${ragResult.documents.size} relevant documents"
+                            } else {
+                                "No relevant documents found"
+                            }
+                            emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(ragThoughtId!!, ragSummary, event.generationId))
+                        }
+                        
+                        val combinedMemoryAndRag = buildString {
+                            if (memoryContext.isNotBlank()) {
+                                append(memoryContext)
+                                append("\n")
+                            }
+                            if (ragContext.isNotBlank()) {
+                                append(ragContext)
+                                append("\n")
+                            }
+                        }.trim()
+
                         if (memoryThoughtId != null) {
-                            val memorySummary = if (memoryResult.rankedFacts.isNotEmpty()) {
-                                "Found ${memoryResult.rankedFacts.size} memories"
+                            val memorySummary = if (memoryResult.rankedFacts.isNotEmpty() && memoryResult.confidence >= 0.5f) {
+                                "Found ${memoryResult.rankedFacts.size} memories (${String.format("%.0f", memoryResult.confidence * 100)}% confident)"
+                            } else if (memoryResult.rankedFacts.isNotEmpty()) {
+                                "Found memories but confidence too low (${String.format("%.0f", memoryResult.confidence * 100)}%)"
                             } else {
                                 "No relevant memories found"
                             }
                             emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(memoryThoughtId!!, memorySummary, event.generationId))
                         }
-                        
-                        if (cancellationToken.isCancelled) return@launch
-                        
-                        // LEVEL 2: Main Reasoning LLM Context Composer
-                        if (plan.cognitiveDepth >= 2) {
-                            if (llmInferenceManager?.isMainModelLoaded == false) {
-                                val defaultPath = settingsManager?.defaultMainModelPath
-                                val rawBackend = settingsManager?.mainHardwareBackend ?: "CPU"
-                                val resolvedBackend = com.example.llmapp.core.inference.LlmInferenceManager.resolveBackendPreference(rawBackend)
-                                if (!defaultPath.isNullOrBlank()) {
-                                    val runtimeThoughtId = java.util.UUID.randomUUID().toString()
-                                    emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(runtimeThoughtId, ThoughtSource.RUNTIME, "Loading reasoning engine", event.generationId))
-                                    try {
-                                        llmInferenceManager?.loadMainModel(defaultPath, resolvedBackend)
-                                        emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(runtimeThoughtId, "Engine ready ($resolvedBackend)", event.generationId))
-                                    } catch (e: Throwable) {
-                                        Log.e("CognitiveTaskScheduler", "Failed to auto-load main model (backend=$resolvedBackend)", e)
-                                        emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(runtimeThoughtId, "Engine failed, using fallback", event.generationId))
-                                        val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
-                                            rawQuery = event.rawQuery,
-                                            toolOutputs = toolResults,
-                                            memoryContext = memoryContext
-                                        )
-                                        llmInferenceManager?.generateOrchestratorResponseAsync(finalPrompt, event.generationId)
-                                        return@launch
-                                    }
-                                } else {
-                                    val runtimeThoughtId = java.util.UUID.randomUUID().toString()
-                                    emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(runtimeThoughtId, ThoughtSource.RUNTIME, "No main engine configured", event.generationId))
-                                    emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(runtimeThoughtId, "Using orchestrator fallback", event.generationId))
-                                    val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
-                                        rawQuery = event.rawQuery,
+
+                        // ── STEP 4: Generate via Gemma 4 E2B (ALL answers go here) ──────
+                        // Auto-load main model if not loaded
+                        if (llmInferenceManager?.isMainModelLoaded == false) {
+                            val defaultPath = settingsManager?.defaultMainModelPath
+                            val rawBackend = settingsManager?.mainHardwareBackend ?: "CPU"
+                            val resolvedBackend = com.example.llmapp.core.inference.LlmInferenceManager.resolveBackendPreference(rawBackend)
+                            if (!defaultPath.isNullOrBlank()) {
+                                val runtimeThoughtId = UUID.randomUUID().toString()
+                                emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(runtimeThoughtId, ThoughtSource.RUNTIME, "Loading reasoning engine", event.generationId))
+                                try {
+                                    llmInferenceManager?.loadMainModel(defaultPath, resolvedBackend)
+                                    emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(runtimeThoughtId, "Engine ready ($resolvedBackend)", event.generationId))
+                                } catch (e: Throwable) {
+                                    Log.e(TAG, "Failed to auto-load main model (backend=$resolvedBackend)", e)
+                                    emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(runtimeThoughtId, "Engine failed, using router fallback", event.generationId))
+                                    // Fallback: use router engine for streaming (degraded mode)
+                                    val finalPrompt = com.example.llmapp.core.inference.ContextComposer.buildContextComposerPrompt(
+                                        originalPrompt = event.prompt,
+                                        rewrittenQuery = event.rawQuery,
                                         toolOutputs = toolResults,
-                                        memoryContext = memoryContext
+                                        memoryContext = combinedMemoryAndRag
                                     )
-                                    llmInferenceManager?.generateOrchestratorResponseAsync(finalPrompt, event.generationId)
+                                    llmInferenceManager?.generateRouterResponseAsync(finalPrompt, event.generationId)
                                     return@launch
                                 }
+                            } else {
+                                val runtimeThoughtId = UUID.randomUUID().toString()
+                                emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(runtimeThoughtId, ThoughtSource.RUNTIME, "No main engine configured", event.generationId))
+                                emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(runtimeThoughtId, "Using router fallback", event.generationId))
+                                val finalPrompt = com.example.llmapp.core.inference.ContextComposer.buildContextComposerPrompt(
+                                    originalPrompt = event.prompt,
+                                    rewrittenQuery = event.rawQuery,
+                                    toolOutputs = toolResults,
+                                    memoryContext = combinedMemoryAndRag
+                                )
+                                llmInferenceManager?.generateRouterResponseAsync(finalPrompt, event.generationId)
+                                return@launch
                             }
-
-                            _state.value = _state.value.copy(phase = ExecutionPhase.SYNTHESIZING)
-                            val genThoughtId = java.util.UUID.randomUUID().toString()
-                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(genThoughtId, ThoughtSource.CONTEXT_COMPOSER, "Generating response", event.generationId))
-                            val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildContextComposerPrompt(
-                                originalPrompt = event.prompt,
-                                rewrittenQuery = plan.rewrittenQuery,
-                                toolOutputs = toolResults,
-                                memoryContext = memoryContext
-                            )
-                            llmInferenceManager?.generateMainResponseAsync(finalPrompt, event.generationId)
-                        } else {
-                            // LEVEL 1: Orchestrator answers simple queries directly
-                            _state.value = _state.value.copy(phase = ExecutionPhase.SYNTHESIZING)
-                            val genThoughtId = java.util.UUID.randomUUID().toString()
-                            emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(genThoughtId, ThoughtSource.CONTEXT_COMPOSER, "Generating response", event.generationId))
-                            
-                            val finalPrompt = com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(
-                                rawQuery = event.rawQuery,
-                                toolOutputs = toolResults,
-                                memoryContext = memoryContext
-                            )
-                            llmInferenceManager?.generateOrchestratorResponseAsync(finalPrompt, event.generationId)
                         }
+
+                        // Main model is loaded — compose final prompt and generate
+                        _state.value = _state.value.copy(phase = ExecutionPhase.SYNTHESIZING)
+                        val genThoughtId = UUID.randomUUID().toString()
+                        emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(genThoughtId, ThoughtSource.CONTEXT_COMPOSER, "Generating response", event.generationId))
+                        val finalPrompt = com.example.llmapp.core.inference.ContextComposer.buildContextComposerPrompt(
+                            originalPrompt = event.prompt,
+                            rewrittenQuery = event.rawQuery,
+                            toolOutputs = toolResults,
+                            memoryContext = combinedMemoryAndRag
+                        )
+                        llmInferenceManager?.generateMainResponseAsync(finalPrompt, event.generationId)
+                        
                     } catch (e: Exception) {
-                        Log.e("CognitiveTaskScheduler", "Pipeline error. Falling back to L1 Orchestrator engine.", e)
-                        llmInferenceManager?.generateOrchestratorResponseAsync(
-                            com.example.llmapp.core.inference.ExecutionGraph.buildOrchestratorFallbackPrompt(event.rawQuery, emptyMap(), ""),
+                        Log.e(TAG, "Pipeline error. Falling back to router engine.", e)
+                        llmInferenceManager?.generateRouterResponseAsync(
+                            com.example.llmapp.core.inference.ContextComposer.buildContextComposerPrompt(event.prompt, event.rawQuery, emptyMap(), ""),
                             event.generationId
                         )
                     }
@@ -411,36 +454,34 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 
                 if (_state.value.activeGenerationId == event.generationId) {
                     _state.value = _state.value.copy(phase = ExecutionPhase.IDLE)
-                    // --- ASYNC MEMORY EXTRACTION ---
-                    val extractionPlan = ctx?.memoryExtractionPlan
-                    Log.d("CognitiveTaskScheduler", "MemoryExtraction Decision: ctx=${ctx != null}, enabled=${extractionPlan?.enabled}, confidence=${extractionPlan?.confidence}, reason=${extractionPlan?.reason}, query=${_state.value.currentQuery}")
-                    if (extractionPlan?.enabled == true && extractionPlan.confidence > 0.7f) {
+                    // --- ASYNC MEMORY EXTRACTION (via router engine, CPU) ---
+                    Log.d(TAG, "MemoryExtraction Decision: ctx=${ctx != null}, needExtraction=${ctx?.needMemoryExtraction}, query=${_state.value.currentQuery}")
+                    if (ctx?.needMemoryExtraction == true) {
                         scope.launch(Dispatchers.IO) {
                             try {
-                                // Wait for the main model's generation job to fully complete
-                                // and release GPU/NPU resources before using the orchestrator.
+                                // Wait for the main model's generation to complete
+                                // and release GPU resources before using the router engine.
                                 llmInferenceManager?.awaitMainGenerationComplete()
                                 
                                 val sessionId = event.generationId
                                 val userMessage = _state.value.currentQuery
                                 
-                                Log.d("CognitiveTaskScheduler", "Triggering MemoryExtraction: Reason=${extractionPlan.reason}, Conf=${extractionPlan.confidence}")
+                                Log.d(TAG, "Triggering MemoryExtraction")
                                 memoryExtractor?.extractAndSaveAsync(userMessage, sessionId)
                                 
                             } catch (e: Exception) {
-                                Log.e("CognitiveTaskScheduler", "CRITICAL: Memory Extraction Failed!", e)
-                                val errorMessage = e.message ?: "Unknown Extraction Failure"
+                                Log.e(TAG, "CRITICAL: Memory Extraction Failed!", e)
                                 replayTracer?.logEvent(
                                     com.example.llmapp.core.telemetry.TraceEvent.Error(
                                         generationId = event.generationId,
                                         errorType = "MemoryExtractionError",
-                                        message = errorMessage
+                                        message = e.message ?: "Unknown Extraction Failure"
                                     )
                                 )
                             }
                         }
                     } else {
-                        Log.d("CognitiveTaskScheduler", "MemoryExtraction SKIPPED: Plan did not pass gate.")
+                        Log.d(TAG, "MemoryExtraction SKIPPED: Not requested by router.")
                     }
                 }
             }

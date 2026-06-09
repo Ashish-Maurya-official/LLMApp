@@ -13,6 +13,7 @@ data class CognitiveState(
 
 enum class ExecutionPhase {
     IDLE,
+    ROUTING,
     PLANNING,
     VERIFYING,
     RETRIEVING,

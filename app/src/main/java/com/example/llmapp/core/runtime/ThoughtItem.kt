@@ -35,8 +35,9 @@ enum class ThoughtState {
  * Using an enum instead of strings prevents typo bugs and enables switch exhaustiveness.
  */
 enum class ThoughtSource {
-    ORCHESTRATOR,
+    ROUTER,
     MEMORY,
+    RAG,
     WEB_SEARCH,
     TOOL_EXECUTOR,
     CONTEXT_COMPOSER,

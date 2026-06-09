@@ -118,7 +118,7 @@ class MemoryConsolidator(
         """.trimIndent()
 
         Log.d("MemoryConsolidator", "Extracting semantic salience in background...")
-        val rawResult = llmInferenceManager.generateOrchestratorResponse(extractionPrompt).trim()
+        val rawResult = llmInferenceManager.generateRouterResponse(extractionPrompt).trim()
         val extractionResult = if (rawResult.startsWith("{")) rawResult else "{\n$rawResult"
 
         try {

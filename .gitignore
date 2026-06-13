@@ -24,3 +24,4 @@ adb_*.txt
 
 # Kotlin compiler artifacts
 .kotlin/
+*.apk

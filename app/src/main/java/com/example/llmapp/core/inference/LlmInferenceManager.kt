@@ -11,6 +11,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.Executors
+import android.os.Build
 
 import com.example.llmapp.core.settings.SettingsManager
 
@@ -19,20 +20,11 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     companion object {
         private const val TAG = "LlmInferenceManager"
 
-        /**
-         * Resolves the effective backend for a given preference.
-         * No hardcoded device blocking — the loadEngineWithFallback chain
-         * handles any initialization failures gracefully via exception → CPU fallback.
-         *
-         * "Auto" → "GPU" (fallback chain will try GPU → CPU)
-         * "GPU"  → "GPU" (fallback chain will try GPU → CPU)
-         * "NPU"  → "NPU" (fallback chain will try NPU → CPU)
-         * "CPU"  → "CPU" (no fallback needed)
-         */
         fun resolveBackendPreference(preferred: String): String {
             return when (preferred) {
-                "Auto" -> "GPU" // Let the fallback chain try GPU first, then CPU
-                else -> preferred // Pass through: GPU, NPU, CPU — all handled by fallback chain
+                "NPU" -> "GPU" 
+                "Auto" -> "GPU"
+                else -> preferred 
             }
         }
     }
@@ -195,22 +187,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         }
     }
 
-    /**
-     * Loads the engine with the resolved backend, with a robust fallback chain:
-     *   NPU → CPU  (if NPU was resolved)
-     *   GPU → CPU  (if GPU was resolved)
-     *   CPU → (no fallback, throw)
-     *
-     * FIX(BUG 1): Before attempting GPU/NPU, runs the GpuCapabilityProbe to
-     * check if the hardware can even support the backend. If the probe fails,
-     * skips directly to CPU — preventing the native SIGSEGV that try-catch
-     * cannot catch.
-     *
-     * FIX(BUG 3): Uses crash-history flags to detect if a previous GPU attempt
-     * caused a process kill (SIGSEGV). If it did, auto-blocks GPU.
-     *
-     * Returns Pair(backendName, fallbackError?) — fallbackError is non-null if a fallback occurred.
-     */
+
     private fun loadEngineWithFallback(modelPath: String, preferredBackend: String, cpuThreads: Int = 8, onLoaded: (Engine, Conversation) -> Unit): Pair<String, Throwable?> {
         Log.d(TAG, "[FALLBACK] Starting loadEngineWithFallback: preferred=$preferredBackend, cpuThreads=$cpuThreads")
 
@@ -306,8 +283,31 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                     }
                 } else {
                     try {
+                        Log.d("NPU_DEBUG", "Native Library Dir: ${context.applicationInfo.nativeLibraryDir}")
+                        val libDir = File(context.applicationInfo.nativeLibraryDir)
+                        Log.d("NPU_DEBUG", "Library Directory Exists: ${libDir.exists()}")
+                        Log.d("NPU_DEBUG", "Library Directory Path: ${libDir.absolutePath}")
+
+                        libDir.listFiles()?.forEach {
+                            Log.d("NPU_DEBUG", "Native Library Found: ${it.name}")
+                        }
+
+                        val dispatchLib = File(libDir, "libLiteRtDispatch.so")
+                        Log.d("NPU_DEBUG", "Dispatch Library Exists: ${dispatchLib.exists()}")
+                        val gpuLib = File(libDir, "libLiteRtGpu.so")
+                        Log.d("NPU_DEBUG", "GPU Library Exists: ${gpuLib.exists()}")
+                        val npuLib = File(libDir, "libLiteRtNpu.so")
+                        Log.d("NPU_DEBUG", "NPU Library Exists: ${npuLib.exists()}")
+
+                        Log.d("NPU_DEBUG", "Attempting NPU initialization")
+
+                        Log.d("NPU_DEBUG", "Manufacturer: ${Build.MANUFACTURER}")
+                        Log.d("NPU_DEBUG", "Model: ${Build.MODEL}")
+                        Log.d("NPU_DEBUG", "Hardware: ${Build.HARDWARE}")
+                        Log.d("NPU_DEBUG", "SOC: ${Build.BOARD}")
+
                         gpuProbe.markNpuInitStarted()
-                        loadWithBackend(modelPath, Backend.NPU(), "NPU", onLoaded)
+                        loadWithBackend(modelPath, Backend.NPU(context.applicationInfo.nativeLibraryDir), "NPU", onLoaded)
                         gpuProbe.markNpuInitSucceeded()
                         "NPU" to null
                     } catch (npuException: Throwable) {
@@ -359,6 +359,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     }
 
     private fun loadWithBackend(modelPath: String, backendConfig: Backend, backendName: String, onLoaded: (Engine, Conversation) -> Unit): String {
+        Log.d("NPU_DEBUG", "Selected Backend: $backendConfig")
         Log.d(TAG, "[LOAD_BACKEND] ── Attempting $backendName ──")
         Log.d(TAG, "[LOAD_BACKEND] Creating EngineConfig for $backendName...")
         val config = EngineConfig(
@@ -370,11 +371,13 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         try {
             Log.d(TAG, "[LOAD_BACKEND] Calling Engine.initialize() ($backendName)... this is where native crashes can occur")
             newEngine.initialize()
+            Log.d("NPU_DEBUG", "Engine initialized successfully")
             Log.d(TAG, "[LOAD_BACKEND] Engine initialized! Creating Conversation ($backendName)...")
             onLoaded(newEngine, newEngine.createConversation())
             Log.d(TAG, "[LOAD_BACKEND] ✅ Successfully loaded with $backendName")
             return backendName
         } catch (e: Throwable) {
+            Log.e("NPU_DEBUG", "Engine initialization failed", e)
             // Close the engine to release native resources before re-throwing.
             // Without this, the leaked native Engine causes SIGSEGV on the next backend attempt.
             Log.w(TAG, "[LOAD_BACKEND] ❌ $backendName failed, closing engine to release native resources")

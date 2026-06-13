@@ -6,30 +6,7 @@ import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
 
-/**
- * Pre-flight safety probe for GPU/NPU inference.
- *
- * The LiteRT-LM native layer (`liblitertlm_jni.so`) can trigger a SIGSEGV
- * during `Engine.initialize()` when GPU/NPU drivers are incompatible. Since
- * SIGSEGV is a POSIX signal — not a Java exception — it **cannot be caught
- * by try-catch** and kills the entire process instantly.
- *
- * This class provides a multi-layer defence:
- *
- * 1. **OpenCL availability check** — If `libOpenCL.so` can't be loaded, GPU
- *    acceleration will definitely crash. Skip it proactively.
- *
- * 2. **Crash history flag** — Before attempting GPU init, we write a "pending"
- *    flag. If the app starts and the flag is still "pending" (i.e. the process
- *    was killed by SIGSEGV before writing "success"), we know GPU crashed last
- *    time and skip it automatically.
- *
- * 3. **Memory pressure check** — If available RAM is below the model size
- *    threshold, GPU init often OOMs as a masked SIGSEGV.
- *
- * 4. **NPU hardware check** — NPU is only available on specific Qualcomm
- *    chipsets with QAIRT runtime installed.
- */
+
 class GpuCapabilityProbe(context: Context) {
 
     companion object {
@@ -138,11 +115,6 @@ class GpuCapabilityProbe(context: Context) {
             return false
         }
 
-        // 2. Log SoC info for NPU (non-Qualcomm SoCs are tried but warned, as crash detector will catch failures)
-        if (!isQualcommDevice()) {
-            Log.w(TAG, "NPU warning: non-Qualcomm SoC detected (${Build.HARDWARE}, ${Build.SOC_MODEL}). Attempting execution anyway...")
-        }
-
         // 3. Check memory
         if (!hasEnoughMemory()) {
             Log.w(TAG, "NPU blocked: insufficient available RAM")
@@ -215,7 +187,6 @@ class GpuCapabilityProbe(context: Context) {
         appendLine("NPU crash count: ${prefs.getInt(KEY_NPU_CRASH_COUNT, 0)}")
         appendLine("GPU last status: ${prefs.getString(KEY_GPU_LAST_ATTEMPT, STATUS_NONE)}")
         appendLine("NPU last status: ${prefs.getString(KEY_NPU_LAST_ATTEMPT, STATUS_NONE)}")
-        appendLine("Qualcomm SoC: ${isQualcommDevice()}")
         appendLine("Available RAM: ${getAvailableRamMb()} MB")
         appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -254,22 +225,6 @@ class GpuCapabilityProbe(context: Context) {
             false
         }
         return vulkanAvailable!!
-    }
-
-    private fun isQualcommDevice(): Boolean {
-        val hardware = Build.HARDWARE.lowercase()
-        val board = Build.BOARD.lowercase()
-
-        // Check SOC_MANUFACTURER on Android 12+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val socMfg = Build.SOC_MANUFACTURER.lowercase()
-            if (socMfg.contains("qualcomm") || socMfg.contains("qcom")) return true
-        }
-
-        // Fallback: check hardware/board strings for known Qualcomm identifiers
-        val qualcommIndicators = listOf("qcom", "qualcomm", "kona", "lahaina", "taro", 
-            "kalama", "pineapple", "sun", "crow", "sm8", "sm7", "sdm", "msm")
-        return qualcommIndicators.any { hardware.contains(it) || board.contains(it) }
     }
 
     private fun hasEnoughMemory(): Boolean {

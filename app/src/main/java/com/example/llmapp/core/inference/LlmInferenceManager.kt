@@ -18,26 +18,13 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
 
     companion object {
         private const val TAG = "LlmInferenceManager"
-
-        /**
-         * Resolves the effective backend for a given preference.
-         * No hardcoded device blocking — the loadEngineWithFallback chain
-         * handles any initialization failures gracefully via exception → CPU fallback.
-         *
-         * "Auto" → "GPU" (fallback chain will try GPU → CPU)
-         * "GPU"  → "GPU" (fallback chain will try GPU → CPU)
-         * "NPU"  → "NPU" (fallback chain will try NPU → CPU)
-         * "CPU"  → "CPU" (no fallback needed)
-         */
         fun resolveBackendPreference(preferred: String): String {
             return when (preferred) {
-                "Auto" -> "GPU" // Let the fallback chain try GPU first, then CPU
-                else -> preferred // Pass through: GPU, NPU, CPU — all handled by fallback chain
+                "Auto" -> "GPU"
+                else -> preferred
             }
         }
     }
-
-    /** Result of a model load attempt, carrying the actual backend and any fallback error. */
     data class LoadResult(
         val backendName: String,
         val fallbackError: Throwable? = null
@@ -81,7 +68,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     private val _outputFlow = MutableSharedFlow<Triple<String, Boolean, String>>(extraBufferCapacity = 64)
     val outputFlow: SharedFlow<Triple<String, Boolean, String>> = _outputFlow
     
-    // Dedicated Single-Thread Executors for each engine to prevent CPU contention and UI jank
+    // Single-thread dispatchers to avoid CPU contention between the engines
     private val routerDispatcher = Executors.newSingleThreadExecutor { Thread(it, "Router-Thread") }.asCoroutineDispatcher()
     private val mainEngineDispatcher = Executors.newSingleThreadExecutor { Thread(it, "MainEngine-Thread") }.asCoroutineDispatcher()
 
@@ -99,7 +86,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
             inferenceMutex.withLock {
                 Log.d(TAG, "[LOAD_MAIN] Requested backend: $hardwareBackend")
                 
-                // FIX(BUG 4): Close Conversation BEFORE Engine to avoid native resource leaks
+                // Close conversation before engine to prevent native resource leaks
                 Log.d(TAG, "[LOAD_MAIN] Closing old main conversation...")
                 safeCloseConversation(mainConversation, "main")
                 mainConversation = null
@@ -107,10 +94,9 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                 safeCloseEngine(mainEngine, "main")
                 mainEngine = null
                 
-                // FIX(BUG 5): Use delay() instead of Thread.sleep() — non-blocking
                 Log.d(TAG, "[LOAD_MAIN] Forcing GC and waiting for GPU resource release...")
                 System.gc()
-                delay(1000) // Coroutine-safe delay — doesn't block the IO thread
+                delay(1000)
                 
                 Log.d(TAG, "[LOAD_MAIN] Checking file existence for $modelPath...")
                 val file = File(modelPath)
@@ -134,7 +120,6 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     suspend fun unloadMainModel() {
         withContext(Dispatchers.IO) {
             inferenceMutex.withLock {
-                // FIX(BUG 4): Close Conversation BEFORE Engine
                 safeCloseConversation(mainConversation, "main")
                 mainConversation = null
                 safeCloseEngine(mainEngine, "main")
@@ -195,28 +180,12 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         }
     }
 
-    /**
-     * Loads the engine with the resolved backend, with a robust fallback chain:
-     *   NPU → CPU  (if NPU was resolved)
-     *   GPU → CPU  (if GPU was resolved)
-     *   CPU → (no fallback, throw)
-     *
-     * FIX(BUG 1): Before attempting GPU/NPU, runs the GpuCapabilityProbe to
-     * check if the hardware can even support the backend. If the probe fails,
-     * skips directly to CPU — preventing the native SIGSEGV that try-catch
-     * cannot catch.
-     *
-     * FIX(BUG 3): Uses crash-history flags to detect if a previous GPU attempt
-     * caused a process kill (SIGSEGV). If it did, auto-blocks GPU.
-     *
-     * Returns Pair(backendName, fallbackError?) — fallbackError is non-null if a fallback occurred.
-     */
     private fun loadEngineWithFallback(modelPath: String, preferredBackend: String, cpuThreads: Int = 8, onLoaded: (Engine, Conversation) -> Unit): Pair<String, Throwable?> {
         Log.d(TAG, "[FALLBACK] Starting loadEngineWithFallback: preferred=$preferredBackend, cpuThreads=$cpuThreads")
 
         return when (preferredBackend) {
             "GPU" -> {
-                // FIX(BUG 1 & 3): Pre-flight GPU capability check
+                // Guard GPU load with safety probe
                 if (!gpuProbe.isGpuSafe()) {
                     val probeError = RuntimeException(
                         "GPU probe BLOCKED initialization. Reason: ${gpuProbe.getDiagnostics()}\n" +
@@ -236,17 +205,13 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                         throw combined
                     }
                 } else {
-                    // GPU probe passed — attempt GPU with crash detection
                     try {
                         gpuProbe.markGpuInitStarted() // Arm crash detector
                         loadWithBackend(modelPath, Backend.GPU(), "GPU", onLoaded)
                         gpuProbe.markGpuInitSucceeded() // Disarm — init survived
                         "GPU" to null
                     } catch (gpuException: Throwable) {
-                        // This catch only works for Java-level exceptions (not SIGSEGV).
-                        // If we reach here, it was a "soft" GPU failure (e.g. unsupported ops).
-                        // Clear the pending flag — this was NOT a SIGSEGV, so don't count it as a crash.
-                        gpuProbe.markGpuInitSucceeded() // Clears pending flag + resets crash counter
+                        gpuProbe.markGpuInitSucceeded()
                         Log.w(TAG, "[FALLBACK] GPU failed (Java exception: ${gpuException::class.simpleName}), falling back to CPU", gpuException)
                         try {
                             // GC before retry to release any partially-allocated GPU resources
@@ -267,7 +232,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
                 }
             }
             "NPU" -> {
-                // FIX(BUG 1 & 3): Pre-flight NPU capability check
+                // Guard NPU load with safety probe
                 if (!gpuProbe.isNpuSafe()) {
                     val probeError = RuntimeException(
                         "NPU probe BLOCKED initialization. NPU safety checks failed (due to previous crashes or low memory).\n" +
@@ -375,8 +340,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
             Log.d(TAG, "[LOAD_BACKEND] ✅ Successfully loaded with $backendName")
             return backendName
         } catch (e: Throwable) {
-            // Close the engine to release native resources before re-throwing.
-            // Without this, the leaked native Engine causes SIGSEGV on the next backend attempt.
+            // Close the engine to release native resources and avoid leaking references
             Log.w(TAG, "[LOAD_BACKEND] ❌ $backendName failed, closing engine to release native resources")
             try { newEngine.close() } catch (closeErr: Throwable) {
                 Log.w(TAG, "[LOAD_BACKEND] Error closing failed $backendName engine (non-fatal): ${closeErr.message}")
@@ -384,10 +348,6 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
             throw e
         }
     }
-
-    // ── Safe resource cleanup helpers ────────────────────────────────────────
-    // FIX(BUG 4): Always close Conversation before Engine, wrapped in try-catch
-    // to prevent cascading failures if one close() throws.
     
     private fun safeCloseConversation(conversation: Conversation?, label: String) {
         try {
@@ -411,15 +371,6 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         Log.d(TAG, "Generation stopped by user/system.")
     }
 
-    // ── Router Inference (Synchronous) ─────────────────────────────────────────
-    /**
-     * Synchronous router inference for FunctionGemma 270M.
-     * Used for:
-     *   1. Routing decisions (JSON classification)
-     *   2. Memory extraction (structured fact extraction)
-     *
-     * Always resets conversation to prevent context creep between calls.
-     */
     suspend fun generateRouterResponse(prompt: String): String {
         return routerMutex.withLock {
             val eng = routerEngine ?: throw IllegalStateException("Router Engine not loaded")
@@ -433,11 +384,7 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
         }
     }
 
-    /**
-     * Async streaming generation on the router engine.
-     * Used as fallback when the main model is unavailable — the router
-     * can answer simple queries in a degraded mode.
-     */
+
     fun generateRouterResponseAsync(prompt: String, generationId: String) {
         val oldJob = routerGenerationJob
         routerGenerationJob = scope.launch(routerDispatcher) {
@@ -481,7 +428,6 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
     }
 
     // ── Main Inference (Streaming Async) ─────────────────────────────────────
-    // FIX(BUG 7): Uses separate `mainGenerationJob` instead of shared `currentGenerationJob`
     fun generateMainResponseAsync(prompt: String, generationId: String) {
         val oldJob = mainGenerationJob
         mainGenerationJob = scope.launch(mainEngineDispatcher) {
@@ -526,8 +472,6 @@ class LlmInferenceManager(private val context: Context, private val settingsMana
 
     /**
      * Suspends until the main model's current generation job completes.
-     * Use this to safely wait for GPU/NPU resources to be released before
-     * running another inference (e.g., memory extraction on the orchestrator).
      */
     suspend fun awaitMainGenerationComplete() {
         mainGenerationJob?.join()

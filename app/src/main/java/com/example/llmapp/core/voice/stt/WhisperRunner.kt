@@ -15,13 +15,7 @@ import java.nio.ByteOrder
 import kotlin.math.*
 
 /**
- * Production STT runner.
- *
- * Primary path  : whisper-tiny.tflite  (on-device, offline)
- * Fallback path : Android SpeechRecognizer (online, lower latency for short queries)
- *
- * The fallback is automatically selected if TFLite model fails to load or if
- * the TFLite path produces an empty/error string.
+ * Runs speech-to-text inference locally using Whisper TFLite or falls back to Android SpeechRecognizer.
  */
 class WhisperRunner(private val context: Context) {
 
@@ -30,7 +24,7 @@ class WhisperRunner(private val context: Context) {
     private var vocab: Map<Int, String> = emptyMap()
     private val isTfliteReady: Boolean get() = tfliteInterpreter != null
 
-    // Android fallback
+
     private var speechRecognizer: SpeechRecognizer? = null
     private var pendingFallbackCallback: ((String) -> Unit)? = null
     private var pendingPartialCallback: ((String) -> Unit)? = null
@@ -122,8 +116,7 @@ class WhisperRunner(private val context: Context) {
     }
 
     /**
-     * Transcribe raw 16kHz 16-bit PCM audio.
-     * Runs on the calling coroutine's dispatcher — caller should use Dispatchers.IO.
+     * Transcribes raw 16kHz 16-bit PCM audio.
      */
     suspend fun transcribe(audio: ShortArray): String = withContext(Dispatchers.IO) {
         if (isTfliteReady) {
@@ -139,9 +132,7 @@ class WhisperRunner(private val context: Context) {
     }
 
     /**
-     * Run Android SpeechRecognizer for the VAD-less path (called directly
-     * from ConversationEngine when TFLite is unavailable).
-     * Must be called on Main thread.
+     * Starts Android SpeechRecognizer. Must be called on the Main thread.
      */
     fun startAndroidAsr(
         onFinal: (String) -> Unit,
@@ -187,14 +178,14 @@ class WhisperRunner(private val context: Context) {
         }
     }
 
-    // ─── Log-Mel Spectrogram ───────────────────────────────────────────────
+    // Log-Mel Spectrogram Computation
 
     private val N_FFT = 400
     private val HOP = 160
     private val N_MELS = 80
     private val N_FRAMES = 3000
 
-    // Precompute sine and cosine tables for 400-point DFT to match Whisper EXACTLY
+    // Precompute sine and cosine tables for 400-point DFT
     private val cosTable = FloatArray(201 * N_FFT)
     private val sinTable = FloatArray(201 * N_FFT)
     
@@ -266,7 +257,7 @@ class WhisperRunner(private val context: Context) {
         return out
     }
 
-    // ─── BPE Token Decoder ──────────────────────────────────────────────────
+    // BPE Token Decoder
 
     private fun decodeTokens(tokens: IntArray): String {
         val sb = StringBuilder()

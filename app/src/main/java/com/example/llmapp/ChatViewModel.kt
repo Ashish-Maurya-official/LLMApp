@@ -29,9 +29,7 @@ import com.example.llmapp.core.search.SearchIntentClassifier
 import com.example.llmapp.core.prompts.PromptPipeline
 import com.example.llmapp.core.prompts.models.PromptContext
 
-// ---------------------------------------------------------------------------
 // Streaming segment parser
-// ---------------------------------------------------------------------------
 
 private fun parseStreamingSegments(text: String): List<StreamingSegment> {
     val result = mutableListOf<StreamingSegment>()
@@ -107,21 +105,15 @@ private fun parseStreamingSegments(text: String): List<StreamingSegment> {
     return result.ifEmpty { listOf(StreamingSegment.Prose(text)) }
 }
 
-// ---------------------------------------------------------------------------
-// Agent phase state machine (Deprecating for CognitiveTaskScheduler)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // ViewModel
-// ---------------------------------------------------------------------------
 
 class ChatViewModel : ViewModel() {
 
-    // ── Core UI state ────────────────────────────────────────────────────────
+    // Core UI state
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
-    // ── RAM-first message list ───────────────────────────────────────────────
+    // RAM-first message list
     private val allMessages = mutableListOf<ChatMessage>()
     private val _sessionMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val sessionMessages: StateFlow<List<ChatMessage>> = _sessionMessages.asStateFlow()
@@ -130,24 +122,24 @@ class ChatViewModel : ViewModel() {
 
     private fun pushMessages() { _sessionMessages.value = allMessages.toList() }
 
-    // ── Streaming state ──────────────────────────────────────────────────────
+    // Streaming state
     private val _streamingState = MutableStateFlow(StreamingState())
     val streamingState: StateFlow<StreamingState> = _streamingState.asStateFlow()
 
-    // ── Theme ────────────────────────────────────────────────────────────────
+    // Theme preference
     private val _themePreference = MutableStateFlow("System")
     val themePreference: StateFlow<String> = _themePreference.asStateFlow()
 
     fun updateTheme(theme: String) { settingsManager?.themePreference = theme; _themePreference.value = theme }
 
-    // ── Settings ─────────────────────────────────────────────────────────────
+    // SettingsManager and history manager references
     var settingsManager: SettingsManager? = null
         set(value) {
             field = value
             value?.let { _themePreference.value = it.themePreference; initializeRetrieval(it) }
         }
 
-    // ── History manager ──────────────────────────────────────────────────────
+    // History manager
     var historyManager: ChatHistoryManager? = null
         set(value) {
             field = value
@@ -220,7 +212,7 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    // ── Session list ─────────────────────────────────────────────────────────
+    // Session list and management
     private val _sessionList = MutableStateFlow<List<com.example.llmapp.core.database.SessionEntity>>(emptyList())
     val sessionList: StateFlow<List<com.example.llmapp.core.database.SessionEntity>> = _sessionList.asStateFlow()
 
@@ -230,7 +222,7 @@ class ChatViewModel : ViewModel() {
         }
     }
 
-    // ── Retrieval ────────────────────────────────────────────────────────────
+    // Memory Retrieval and Indexing
     private var hybridRetriever: com.example.llmapp.core.retrieval.HybridRetriever? = null
     private var embeddingManager: com.example.llmapp.core.retrieval.EmbeddingManager? = null
 
@@ -278,7 +270,7 @@ class ChatViewModel : ViewModel() {
     // Tracks the active search ThoughtEvent ID for completion signaling
     @Volatile private var activeSearchThoughtId: String? = null
 
-    // ── Session ID ───────────────────────────────────────────────────────────
+    // Session management
     private var currentSessionId: String = System.currentTimeMillis().toString()
 
     @Volatile private var currentUserQuery: String = ""
@@ -322,9 +314,7 @@ class ChatViewModel : ViewModel() {
             }
         }
 
-    // ── Parsing ──────────────────────────────────────────────────────────────
-    // Thoughts no longer come from XML tags in the token stream.
-    // They arrive as typed ThoughtEvents via the CognitiveEvent bus.
+    // Parsing stream content
     private data class ParsedContent(val visibleText: String, val raw: String)
 
     private fun parseStreamContent(raw: String): ParsedContent {

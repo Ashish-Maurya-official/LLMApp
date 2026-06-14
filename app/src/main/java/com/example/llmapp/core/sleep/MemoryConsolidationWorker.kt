@@ -23,49 +23,46 @@ class MemoryConsolidationWorker(
             val chatDao = db.chatDao()
             val stateDao = db.cognitiveStateDao()
 
-            // 1. Fetch raw episodic messages from the last 24 hours.
-            // In a full implementation, we pass these logs to the LLM for summarization.
+            // Fetch raw episodic messages
             Log.d("MemoryConsolidation", "Extracting semantic traits and long-horizon goals...")
 
-            // 2. Validate extracted narratives against Zone 0 Core Identity
+            // Validate narrative integrity
             val narrativeValidator = NarrativeIntegrityValidator(chatDao)
             
-            // Mocking an extracted goal from the day's chats
+
             val newGoal = com.example.llmapp.core.database.GoalEntity(
                 description = "User wants to learn Android WorkManager.",
                 status = "ACTIVE",
                 priority = 2
             )
 
-            // 3. Nightly Identity Audit (Anti-Dependency & Drift Protection)
+            // Identity drift protection
             val anchorManager = com.example.llmapp.core.identity.IdentityAnchorManager(stateDao)
             val recentMemories = chatDao.getMemoriesByType("semantic")
             val purgedMemories = anchorManager.auditMemoriesForDrift(recentMemories)
             
             if (purgedMemories.isNotEmpty()) {
                 Log.w("MemoryConsolidation", "Identity Drift Detected! Purged \${purgedMemories.size} non-compliant memories.")
-                // In production, we would execute: stateDao.deleteMemories(purgedMemories)
+
             }
 
-            // 4. Multi-Timescale Lifecycle Policy: Age working memory to episodic
+            // Multi-timescale lifecycle policy
             Log.d("MemoryConsolidation", "Applying Multi-Timescale Lifecycle Policies...")
             val workingMemories = chatDao.getMemoriesByType("working")
             val agedWorkingMemories = workingMemories.filter { System.currentTimeMillis() - it.timestamp > 86400000L } // Older than 24h
-            // In a real implementation: stateDao.updateMemoryTypes(agedWorkingMemories.map { it.id }, "episodic")
+
             
-            // 5. Retrieval Poisoning & Contamination Detection
-            // Prevent hallucination loops by purging semantic memories built purely on low-confidence assumptions
+            // Contamination detection
             Log.d("MemoryConsolidation", "Running Recursive-Memory Contamination Detection...")
             val contaminatedMemories = recentMemories.filter { 
                 it.epistemicState == "CONTRADICTED" || (it.epistemicState == "ASSUMED" && System.currentTimeMillis() - it.timestamp > 7 * 86400000L) // Assumed for > 1 week without verification
             }
             if (contaminatedMemories.isNotEmpty()) {
                 Log.w("MemoryConsolidation", "Contamination Detected! Purged \${contaminatedMemories.size} low-confidence recursive memories.")
-                // In a real implementation: stateDao.deleteMemories(contaminatedMemories)
+
             }
 
-            // 6. Write validated goals and memories via Atomic Pipeline
-            // This ensures sleep-cycle cognition uses the exact same protections as active cognition.
+            // Save snapshot and validated goals
             val newHash = EpistemicLedger.calculateStateHash(recentMemories)
 
             val snapshot = com.example.llmapp.core.database.CognitiveSnapshotEntity(

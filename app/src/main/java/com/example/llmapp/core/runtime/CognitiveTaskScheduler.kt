@@ -40,7 +40,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
         private const val TAG = "CognitiveTaskScheduler"
     }
 
-    // Dedicated Thread Pool for multi-agent I/O and routing operations to avoid UI/Main contention
+    // Thread pool for multi-agent routing operations
     private val agentDispatcher = Executors.newFixedThreadPool(4) { Thread(it, "Agent-Thread") }.asCoroutineDispatcher()
 
     var chatDatabase: com.example.llmapp.core.database.ChatDatabase? = null
@@ -154,7 +154,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                     telemetry.onGenerationRequested()
                     
                     try {
-                        // ── STEP 1: Route via FunctionGemma (< 1 second, CPU) ────────────
+                        // Step 1: Query Routing
                         _state.value = _state.value.copy(phase = ExecutionPhase.ROUTING)
                         val routeThoughtId = UUID.randomUUID().toString()
                         emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(routeThoughtId, ThoughtSource.ROUTER, "Routing query", event.generationId))
@@ -176,9 +176,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                             needMemoryExtraction = decision.needMemoryExtraction
                         )
 
-                        // ── STEP 2: Parallel retrieval based on boolean flags ────────────
-                        
-                        // 2a. Memory Recall (if needMemory=true)
+                        // Step 2: Parallel Retrieval (Memory, RAG, Tools)
                         var memoryThoughtId: String? = null
                         val memoryDeferred = if (decision.needMemory) {
                             memoryThoughtId = UUID.randomUUID().toString()
@@ -210,10 +208,9 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                             }
                         } else null
                         
-                        // 2b. RAG Retrieval (if needRag=true)
                         var ragThoughtId: String? = null
                         val ragDeferred = if (decision.needRag && ragRetriever != null) {
-                            _state.value = _state.value.copy(phase = ExecutionPhase.RETRIEVING)
+                            // RAG Retrieval
                             ragThoughtId = UUID.randomUUID().toString()
                             emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(ragThoughtId, ThoughtSource.RAG, "Searching documents for: ${event.rawQuery}", event.generationId))
                             
@@ -227,7 +224,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                             }
                         } else null
 
-                        // 2c. Tool Execution (if needTools=true)
+                        // Tool Execution
                         var toolThoughtId: String? = null
                         val toolResults = mutableMapOf<String, String>()
                         if (decision.needTools && decision.toolName != null) {
@@ -257,7 +254,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                             emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(toolThoughtId, "Tool completed", event.generationId))
                         }
 
-                        // ── STEP 3: Await memory + apply confidence gate ─────────────────
+                        // Step 3: Await parallel tasks and compose contexts
                         val memoryResult = memoryDeferred?.await() ?: com.example.llmapp.core.orchestrator.MemoryResult.EMPTY
                         val memoryContext = if (memoryResult.confidence >= 0.5f) {
                             memoryResult.toContextString()
@@ -302,8 +299,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                             emit(CognitiveEvent.ThoughtEvent.ThoughtCompleted(memoryThoughtId!!, memorySummary, event.generationId))
                         }
 
-                        // ── STEP 4: Generate via Gemma 4 E2B (ALL answers go here) ──────
-                        // Auto-load main model if not loaded
+                        // Step 4: LLM Response Generation (auto-loading main model if needed)
                         if (llmInferenceManager?.isMainModelLoaded == false) {
                             val defaultPath = settingsManager?.defaultMainModelPath
                             val rawBackend = settingsManager?.mainHardwareBackend ?: "CPU"
@@ -376,8 +372,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
             is CognitiveEvent.SystemEvent.ThermalStatusChanged -> {
                 Log.w("CognitiveTaskScheduler", "Thermal State Changed to: ${event.state}")
                 if (event.state == CognitiveEvent.ThermalState.CRITICAL) {
-                    // ── CRITICAL FIX: Don't silently kill GPU model ──────────────
-                    // 1. Emit visible warning so user knows what happened
+                    // Thermal mitigation: Unload main GPU model to prevent overheating
                     val thermalThoughtId = java.util.UUID.randomUUID().toString()
                     val activeGenId = _state.value.activeGenerationId ?: "thermal"
                     emit(CognitiveEvent.ThoughtEvent.ThoughtStarted(
@@ -388,7 +383,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                         thermalThoughtId, "Unloading GPU model to prevent damage", generationId = activeGenId
                     ))
 
-                    // 2. Clear crash flags BEFORE unloading — this is a controlled shutdown, NOT a crash
+                    // Reset crash flags since this is a controlled thermal shutdown
                     llmInferenceManager?.gpuProbe?.let { probe ->
                         Log.w("CognitiveTaskScheduler", "Clearing GPU/NPU crash flags (thermal unload is not a crash)")
                         probe.resetCrashHistory()
@@ -454,7 +449,7 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
                 
                 if (_state.value.activeGenerationId == event.generationId) {
                     _state.value = _state.value.copy(phase = ExecutionPhase.IDLE)
-                    // --- ASYNC MEMORY EXTRACTION (via router engine, CPU) ---
+                    // Async memory extraction
                     Log.d(TAG, "MemoryExtraction Decision: ctx=${ctx != null}, needExtraction=${ctx?.needMemoryExtraction}, query=${_state.value.currentQuery}")
                     if (ctx?.needMemoryExtraction == true) {
                         scope.launch(Dispatchers.IO) {
@@ -497,9 +492,8 @@ class CognitiveTaskScheduler(private val scope: CoroutineScope) {
         }
     }
 
-    // ── Memory Retrieval Budgeting ────────────────────────────────────────────
-
-    /** Importance → max number of results to retrieve across all stores. */
+    // Memory Retrieval Budgeting
+                    
     private fun budgetFromImportance(importance: Float): Int = when {
         importance > 0.8f -> 15
         importance > 0.5f -> 8

@@ -1,22 +1,12 @@
 package com.example.llmapp.core.inference
 
 /**
- * Context Composer — builds final prompts for the Main LLM (Gemma 4 E2B).
- *
- * Responsibilities:
- *   • Fuse memory context + tool outputs into the conversation prompt
- *   • Build a minimal standalone prompt when the main model is unavailable (router fallback)
- *
- * This object does NOT handle routing — that's FunctionGemmaRouter's job.
+ * Fuses memory context and tool outputs into LLM/router prompts.
  */
 object ContextComposer {
 
     /**
-     * Fuses parallel execution results (memory, tools) into the conversation prompt.
-     *
-     * The originalPrompt contains the full multi-turn conversation ending with
-     * "<start_of_turn>model\n". This method injects memory and tool results
-     * right before that final model turn marker.
+     * Injects retrieved memory and background tool outputs before the final model turn marker.
      */
     fun buildContextComposerPrompt(
         originalPrompt: String,
@@ -54,9 +44,7 @@ object ContextComposer {
     }
 
     /**
-     * Builds a minimal standalone prompt for the router fallback.
-     * Used when the main model fails to load — the router engine
-     * answers in degraded mode using this lightweight prompt.
+     * Builds a standalone fallback prompt for the router if the main model fails to load.
      */
     fun buildRouterFallbackPrompt(
         rawQuery: String,

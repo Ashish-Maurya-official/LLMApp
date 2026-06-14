@@ -7,28 +7,8 @@ import android.os.Build
 import android.util.Log
 
 /**
- * Pre-flight safety probe for GPU/NPU inference.
- *
- * The LiteRT-LM native layer (`liblitertlm_jni.so`) can trigger a SIGSEGV
- * during `Engine.initialize()` when GPU/NPU drivers are incompatible. Since
- * SIGSEGV is a POSIX signal — not a Java exception — it **cannot be caught
- * by try-catch** and kills the entire process instantly.
- *
- * This class provides a multi-layer defence:
- *
- * 1. **OpenCL availability check** — If `libOpenCL.so` can't be loaded, GPU
- *    acceleration will definitely crash. Skip it proactively.
- *
- * 2. **Crash history flag** — Before attempting GPU init, we write a "pending"
- *    flag. If the app starts and the flag is still "pending" (i.e. the process
- *    was killed by SIGSEGV before writing "success"), we know GPU crashed last
- *    time and skip it automatically.
- *
- * 3. **Memory pressure check** — If available RAM is below the model size
- *    threshold, GPU init often OOMs as a masked SIGSEGV.
- *
- * 4. **NPU hardware check** — NPU is only available on specific Qualcomm
- *    chipsets with QAIRT runtime installed.
+ * Safeguards GPU/NPU initialization against native driver SIGSEGV and OOM crashes.
+ * Uses persistent crash flags, library checks, memory pressure thresholds, and SoC detection.
  */
 class GpuCapabilityProbe(context: Context) {
 
@@ -65,8 +45,7 @@ class GpuCapabilityProbe(context: Context) {
     // ── Public API ───────────────────────────────────────────────────────────
 
     /**
-     * Returns `true` if it is safe to attempt `Backend.GPU()`.
-     * If this returns `false`, the caller MUST use `Backend.CPU()` instead.
+     * Checks if initializing with Backend.GPU() is safe.
      */
     fun isGpuSafe(): Boolean {
         // 1. Check if user has explicitly disabled GPU (after too many crashes)
@@ -116,8 +95,7 @@ class GpuCapabilityProbe(context: Context) {
     }
 
     /**
-     * Returns `true` if it is safe to attempt `Backend.NPU()`.
-     * NPU requires Qualcomm QAIRT runtime which is only on specific chipsets.
+     * Checks if initializing with Backend.NPU() is safe.
      */
     fun isNpuSafe(): Boolean {
         // 1. Check crash history
@@ -154,8 +132,7 @@ class GpuCapabilityProbe(context: Context) {
     }
 
     /**
-     * Must be called BEFORE `Engine.initialize()` with GPU.
-     * Sets the "pending" flag so we can detect if the process gets killed by SIGSEGV.
+     * Sets the "pending" flag before GPU init to track potential native SIGSEGV crashes.
      */
     fun markGpuInitStarted() {
         prefs.edit().putString(KEY_GPU_LAST_ATTEMPT, STATUS_PENDING).commit() // commit() not apply() — must be synchronous
@@ -163,8 +140,7 @@ class GpuCapabilityProbe(context: Context) {
     }
 
     /**
-     * Must be called AFTER `Engine.initialize()` with GPU succeeds.
-     * Clears the "pending" flag and resets crash counter.
+     * Resets GPU crash flags and counters on successful initialization.
      */
     fun markGpuInitSucceeded() {
         prefs.edit()
@@ -187,8 +163,7 @@ class GpuCapabilityProbe(context: Context) {
     }
 
     /**
-     * Resets all crash history flags. Call this when the user explicitly
-     * requests to retry GPU (e.g. from a settings toggle).
+     * Resets all crash and override flags to allow backend retries.
      */
     fun resetCrashHistory() {
         prefs.edit()

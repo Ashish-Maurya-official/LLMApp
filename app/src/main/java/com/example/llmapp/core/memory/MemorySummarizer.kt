@@ -5,9 +5,7 @@ import com.example.llmapp.core.inference.LlmInferenceManager
 import com.example.llmapp.core.orchestrator.RankedMemory
 
 /**
- * LLM-powered memory summarization. Condenses raw facts into 2-3 sentences
- * that directly address the recall objective, saving tokens enormously.
- * Uses the Orchestrator (0.5B) model — lightweight, fast.
+ * Condenses raw facts into a concise summary matching a recall objective.
  */
 class MemorySummarizer {
 
@@ -19,7 +17,6 @@ class MemorySummarizer {
 
     /**
      * Summarizes ranked memories into a concise context string.
-     * Falls back to empty string (MemoryResult.toContextString() uses raw facts).
      */
     suspend fun summarize(
         objective: String,
@@ -62,7 +59,7 @@ class MemorySummarizer {
             capped
         } catch (e: Exception) {
             Log.w(TAG, "Summarization failed, will use raw facts: ${e.message}")
-            "" // Fallback: toContextString() uses raw facts
+            ""
         }
     }
 }

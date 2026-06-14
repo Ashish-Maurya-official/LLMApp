@@ -21,10 +21,7 @@ data class ParsedIntent(
 )
 
 /**
- * FunctionGemma 270M Semantic Router.
- *
- * Routes user queries by analyzing intent and delegating to a policy gate.
- * The router NEVER answers users — it only classifies.
+ * Semantic router using FunctionGemma 270M to classify user query intents.
  */
 class FunctionGemmaRouter(
     private val llmInferenceManager: LlmInferenceManager,
@@ -61,16 +58,16 @@ class FunctionGemmaRouter(
     suspend fun route(userQuery: String): RoutingDecision {
         val normalized = normalizeQuery(userQuery)
 
-        // Step 1: Fast route cache
+        // Fast route cache
         fastRoutes[normalized]?.let { cached ->
             Log.d(TAG, "Fast route HIT: '$normalized' → ${cached.intent}")
             return cached
         }
 
-        // Step 2-5: FunctionGemma inference with timeout
+        // Router model inference
         return try {
             withTimeout(ROUTER_TIMEOUT_MS) {
-                val prompt = buildRouterPrompt(userQuery) // Keep original query for LLM
+                val prompt = buildRouterPrompt(userQuery)
                 val rawJson = llmInferenceManager.generateRouterResponse(prompt)
                 Log.d(TAG, "Raw router output: $rawJson")
 
@@ -94,7 +91,7 @@ class FunctionGemmaRouter(
         }
     }
 
-    // ── Prompt Builder ───────────────────────────────────────────────────────
+    // Prompt Builder
 
     private fun buildRouterPrompt(query: String): String {
         val manifest = toolRegistry.toolManifest()
@@ -138,7 +135,7 @@ class FunctionGemmaRouter(
         """.trimIndent()
     }
 
-    // ── JSON Parser ──────────────────────────────────────────────────────────
+    // JSON Parser
 
     private fun parseRoutingJson(rawJson: String, originalQuery: String): ParsedIntent {
         try {
@@ -179,7 +176,7 @@ class FunctionGemmaRouter(
         }
     }
 
-    // ── Policy Gate ──────────────────────────────────────────────────────────
+    // Policy Gate
 
     private fun applyPolicyGate(intent: ParsedIntent, normalizedQuery: String, originalQuery: String): RoutingDecision {
         var finalIntent = intent.primaryIntent
@@ -219,7 +216,7 @@ class FunctionGemmaRouter(
         )
     }
 
-    // ── Meaning-Based Heuristics ─────────────────────────────────────────────
+    // Heuristic Fallbacks
 
     private fun heuristicOverride(normalizedQuery: String, originalQuery: String): ParsedIntent {
         var memoryRecallScore = 0

@@ -5,14 +5,7 @@ import com.example.llmapp.core.orchestrator.ToolRequest
 import com.example.llmapp.core.runtime.CognitiveWorker
 
 /**
- * Type-safe tool definitions.
- * Each tool has a unique ID and a human-readable description for the router prompt.
- *
- * Adding a new tool:
- *   1. Add a new object here
- *   2. Implement CognitiveWorker for it
- *   3. Register in MainActivity
- *   4. FunctionGemma will see it via toolManifest()
+ * Type-safe tool definitions with IDs and descriptions for routing.
  */
 sealed class Tool(val id: String, val description: String) {
     object WebSearch : Tool("WEB_SEARCH", "Search the internet for real-time information, news, or facts")
@@ -31,16 +24,7 @@ sealed class Tool(val id: String, val description: String) {
 }
 
 /**
- * Central registry for tool workers.
- * Maps sealed Tool definitions to their CognitiveWorker implementations.
- *
- * Usage:
- *   val registry = ToolRegistry()
- *   registry.register(Tool.WebSearch, webSearchAgent)
- *   registry.register(Tool.Flashlight, flashlightWorker)
- *
- *   val worker = registry.resolve("WEB_SEARCH")
- *   worker?.execute(request)
+ * Central registry mapping Tool definitions to their CognitiveWorker implementations.
  */
 class ToolRegistry {
     companion object {
@@ -79,12 +63,7 @@ class ToolRegistry {
     fun allKnownTools(): List<Tool> = Tool.ALL
 
     /**
-     * Generates a tool manifest string for the FunctionGemma router prompt.
-     * Only includes tools with registered workers.
-     *
-     * Example output:
-     *   WEB_SEARCH: Search the internet for real-time information, news, or facts
-     *   FLASHLIGHT: Toggle the device flashlight on or off
+     * Generates a tool manifest string for the router prompt.
      */
     fun toolManifest(): String {
         return availableTools().joinToString("\n") { "${it.id}: ${it.description}" }

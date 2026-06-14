@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Enable 120fps / High Refresh Rate
+        // High refresh rate initialization
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             val modes = window.windowManager.defaultDisplay.supportedModes
             val maxMode = modes.maxByOrNull { it.refreshRate }
@@ -76,7 +76,7 @@ class MainActivity : ComponentActivity() {
         viewModel.settingsManager = settingsManager
         viewModel.historyManager = historyManager
 
-        // Initialize Search System
+        // Search initialization
         searchPreferences = com.example.llmapp.core.search.settings.SearchPreferences(this)
         secureSearchStorage = com.example.llmapp.core.search.settings.SecureSearchStorage(this)
         val orchestrator = com.example.llmapp.core.search.orchestration.SearchOrchestrator(
@@ -86,7 +86,7 @@ class MainActivity : ComponentActivity() {
         val webSearchAgent = com.example.llmapp.core.search.WebSearchAgent(orchestrator)
         viewModel.cognitiveTaskScheduler.workers = listOf(webSearchAgent)
         
-        // Phase 5: Initialize New Routing Architecture
+        // Initialize router and tools
         val toolRegistry = com.example.llmapp.core.tools.ToolRegistry().apply {
             register(com.example.llmapp.core.tools.Tool.WebSearch, webSearchAgent)
         }
@@ -122,10 +122,10 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Schedule the Cognitive Sleep Cycle (WorkManager)
+        // Cognitive sleep cycle
         com.example.llmapp.core.sleep.SleepCycleScheduler.scheduleSleepCycle(this)
 
-        // Auto-load Router model only. Main model loads dynamically on demand.
+        // Auto-load Router model
         if (settingsManager.defaultRouterModelPath.isNotBlank()) {
             viewModel.processIntent(ChatIntent.LoadModel(settingsManager.defaultRouterModelPath, true))
         }

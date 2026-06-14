@@ -13,8 +13,7 @@ class WebSearchAgent(
     override val name: String = "WEB_SEARCH"
 
     override suspend fun execute(request: ToolRequest): WorkerResult {
-        // If the orchestrator didn't provide a specific query, fallback to the plan's rewrittenQuery
-        // though in the future it should always be provided by the prompt schema.
+        // Fallback if no query is provided
         val query = request.query ?: return WorkerResult.Error("No query provided for WEB_SEARCH")
 
         return try {

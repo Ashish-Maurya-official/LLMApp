@@ -12,9 +12,6 @@ import org.json.JSONObject
 
 /**
  * Auto-generates episodic memory summaries from conversation segments.
- * Triggers every 20 turns OR 30 minutes, whichever comes first.
- *
- * Hierarchical: Episodes → Chapters → Books (chapters/books are future work).
  */
 class EpisodeGenerator(
     private val llmInferenceManager: LlmInferenceManager,
@@ -31,8 +28,7 @@ class EpisodeGenerator(
     private var lastEpisodeTimestamp = System.currentTimeMillis()
 
     /**
-     * Called after each completed conversation turn.
-     * Checks if an episode should be generated based on turn count or time elapsed.
+     * Checks and triggers episode generation on turn completion.
      */
     fun onTurnCompleted(sessionId: String, recentMessages: List<ChatMessage>) {
         turnCount++
@@ -46,7 +42,7 @@ class EpisodeGenerator(
     }
 
     /**
-     * Force-generates an episode (e.g., on session end).
+     * Forces immediate episode generation if sufficient turn count exists.
      */
     fun forceGenerate(sessionId: String, recentMessages: List<ChatMessage>) {
         if (turnCount > 3) { // Only if there's enough content
@@ -91,7 +87,7 @@ class EpisodeGenerator(
                     sessionId = sessionId,
                     topic = topic,
                     outcome = outcome,
-                    keyFacts = keyFacts.joinToString("|"), // Simple delimiter for now
+                    keyFacts = keyFacts.joinToString("|"),
                     turnCount = messages.takeLast(TURNS_THRESHOLD).size
                 )
 
@@ -105,7 +101,7 @@ class EpisodeGenerator(
     }
 
     /**
-     * Resets turn counter (e.g., on session switch).
+     * Resets session tracking statistics.
      */
     fun reset() {
         turnCount = 0

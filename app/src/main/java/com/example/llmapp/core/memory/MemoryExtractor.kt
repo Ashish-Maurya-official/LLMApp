@@ -28,7 +28,7 @@ class MemoryExtractor(
     private val extractionRunning = AtomicBoolean(false)
 
     /**
-     * Entry point for background extraction.
+     * Extracts facts from user queries and updates long-term storage in the background.
      */
     suspend fun extractAndSaveAsync(userQuery: String, sessionId: String) {
         if (!shouldExtractMemory(userQuery)) {
@@ -88,11 +88,7 @@ class MemoryExtractor(
     }
 
     private fun shouldExtractMemory(userQuery: String): Boolean {
-        // We now rely on the Level 1 Orchestrator model for the semantic gating decision.
-        // This is just a lightweight final sanity check to prevent impossible extractions.
-        if (userQuery.length < 3) return false
-        
-        return true
+        return userQuery.length >= 3
     }
 
     private fun buildExtractionPrompt(userQuery: String): String {
@@ -170,10 +166,7 @@ class MemoryExtractor(
             return
         }
 
-        // FTS Deduplication
-        // We use FTS to find existing memories with similar words.
-        // We do a basic word split to create a MATCH query for SQLite FTS.
-        // SQLite FTS match requires terms, so we take the most prominent words.
+        // Build FTS MATCH query on significant words
         val safeTerms = candidate.fact.replace(Regex("[^a-zA-Z0-9 ]"), "").split(" ")
             .filter { it.length > 3 }
             .joinToString(" OR ")
@@ -221,9 +214,7 @@ class MemoryExtractor(
     }
     
     /**
-     * Bridges inferred memories to explicit profile fields.
-     * When the user says "my name is Ashish", the fact is stored as a semantic memory
-     * AND the Full Name field on the profile page is auto-populated.
+     * Bridges inferred memories to populate profile fields automatically.
      */
     private fun autoFillProfileField(candidate: MemoryCandidate) {
         if (settingsManager == null) return

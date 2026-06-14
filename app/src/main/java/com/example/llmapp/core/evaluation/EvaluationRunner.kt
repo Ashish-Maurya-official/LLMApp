@@ -41,14 +41,13 @@ class EvaluationRunner(
                 epistemicState = "VERIFIED"
             )
 
-            // Inject temporary memory into SQLite
+            // Inject evaluation memory and await FTS sync
             database.cognitiveStateDao().insertMemories(listOf(tempMemory))
 
             try {
-                // Small delay to allow FTS trigger to sync
                 kotlinx.coroutines.delay(500)
 
-                // 1. Test Retrieval Hit Rate
+                // 1. Retrieval Verification
                 val retrieved = retriever.retrieveRelevance(test.query)
                 val hit = retrieved.any { it.content == test.syntheticMemory }
                 if (!hit) {
@@ -56,11 +55,11 @@ class EvaluationRunner(
                     continue
                 }
 
-                // 2. Test Generation Faithfulness
+                // 2. Response Faithfulness
                 val prompt = "<start_of_turn>user\nContext: ${test.syntheticMemory}\nQuestion: ${test.query}<end_of_turn>\n<start_of_turn>model\n"
                 val response = inferenceManager.generateResponse(prompt)
 
-                // 3. Score Output via Heuristics
+                // 3. Output Validation
                 val hasExpected = test.expectedKeywords.any { response.contains(it, ignoreCase = true) }
                 val hasForbidden = test.forbiddenKeywords.any { response.contains(it, ignoreCase = true) }
 
@@ -77,7 +76,7 @@ class EvaluationRunner(
             } catch (e: Exception) {
                 logs.add("❌ ERROR: ${e.message}")
             } finally {
-                // Rollback database to protect User's Cognitive Identity
+                // Rollback evaluation memory
                 database.cognitiveStateDao().deleteMemoriesBySession("EVAL_SESSION")
             }
             

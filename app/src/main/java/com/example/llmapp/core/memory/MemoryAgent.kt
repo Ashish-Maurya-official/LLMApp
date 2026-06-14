@@ -7,16 +7,7 @@ import com.example.llmapp.core.orchestrator.MemoryGoal
 import com.example.llmapp.core.orchestrator.MemoryResult
 
 /**
- * The core cognitive memory agent. Orchestrates a multi-stage recall pipeline:
- *
- *   MemoryRecallCache (hit?) → MemoryPlanner → MemoryRetriever (cost-budgeted)
- *   → MemoryGovernor → MemoryRanker → MemoryConflictResolver → MemorySummarizer
- *
- * This is internal cognition, NOT a tool. It runs in parallel with tool execution
- * but is conceptually separate — memory is part of thinking, not acting.
- *
- * @param thoughtEmitter Optional callback to emit live pipeline stage updates
- *        to the ThinkingTimeline UI. The scheduler wires this to ThoughtUpdated events.
+ * Orchestrates the multi-stage memory recall pipeline (Cache -> Plan -> Retrieve -> Govern -> Rank -> Resolve -> Summarize).
  */
 class MemoryAgent(
     private val memoryDao: MemoryDao,
@@ -37,22 +28,19 @@ class MemoryAgent(
     private val summarizer = MemorySummarizer()
 
     /**
-     * Executes the full multi-stage memory recall pipeline.
-     *
-     * @param goal What to recall — objective, categories, budget, and original query
-     * @return MemoryResult with summarized facts, conflicts, and attribution
+     * Executes the memory recall pipeline.
      */
     suspend fun recall(goal: MemoryGoal): MemoryResult {
         Log.d(TAG, "Recall: objective='${goal.objective}', categories=${goal.categories}, budget=${goal.maxResults}, costBudget=${goal.costBudget}")
 
-        // Stage 0: Cache check
+        // Cache check
         cache.get(goal)?.let { cached ->
             Log.d(TAG, "Cache HIT for '${goal.objective}'")
             thoughtEmitter?.invoke("Cache hit — using previous recall")
             return cached
         }
 
-        // Stage 1: Plan — generate search terms from goal + original query
+        // Planner stage
         thoughtEmitter?.invoke("Generating search terms")
         val searchTerms = planner.generateSearchTerms(goal)
         Log.d(TAG, "Stage 1 (Plan): search terms = $searchTerms")
@@ -63,7 +51,7 @@ class MemoryAgent(
             return MemoryResult.EMPTY
         }
 
-        // Stage 2: Retrieve — cost-budgeted, multi-store
+        // Retrieval stage
         thoughtEmitter?.invoke("Searching ${goal.categories.size} memory stores")
         val raw = retriever.retrieve(searchTerms, goal.categories, goal.maxResults, goal.costBudget)
         if (raw.isEmpty()) {
@@ -74,7 +62,7 @@ class MemoryAgent(
         Log.d(TAG, "Stage 2 (Retrieve): ${raw.size} raw results")
         thoughtEmitter?.invoke("Found ${raw.size} memories")
 
-        // Stage 3: Govern — epistemic state filter
+        // Governance stage
         val governed = governor.filter(raw)
         if (governed.isEmpty()) {
             Log.d(TAG, "Stage 3 (Govern): All memories filtered out. Returning EMPTY.")
@@ -83,24 +71,24 @@ class MemoryAgent(
         }
         Log.d(TAG, "Stage 3 (Govern): ${governed.size} after governance (${raw.size - governed.size} removed)")
 
-        // Stage 4: Rank — multi-factor scoring
+        // Ranking stage
         thoughtEmitter?.invoke("Ranking ${governed.size} results")
         val ranked = ranker.rank(governed)
         Log.d(TAG, "Stage 4 (Rank): top=${ranked.firstOrNull()?.fact?.take(50)} (score=${ranked.firstOrNull()?.score})")
 
-        // Stage 5: Conflict resolution — temporal evolution detection
+        // Conflict resolution
         val (resolved, conflicts) = conflictResolver.resolve(ranked)
         if (conflicts.isNotEmpty()) {
             Log.d(TAG, "Stage 5 (Conflicts): ${conflicts.size} detected: $conflicts")
             thoughtEmitter?.invoke("Resolved ${conflicts.size} conflicts")
         }
 
-        // Stage 6: Summarize — LLM condenses facts into 2-3 sentences
+        // Summarization stage
         thoughtEmitter?.invoke("Summarizing ${resolved.size} facts")
         val summary = summarizer.summarize(goal.objective, resolved, conflicts, llmInferenceManager)
         Log.d(TAG, "Stage 6 (Summarize): ${summary.length} chars")
 
-        // Stage 7: Track access counts
+        // Update access metrics
         retriever.trackAccess(resolved)
 
         val result = MemoryResult(
@@ -116,7 +104,7 @@ class MemoryAgent(
     }
 
     /**
-     * Invalidate cache when new memories are written (called by MemoryConsolidator).
+     * Invalidates the recall cache.
      */
     fun invalidateCache() {
         cache.invalidate()

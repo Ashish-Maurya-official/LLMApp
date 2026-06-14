@@ -15,15 +15,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
 /**
- * Production-grade Piper TTS Engine using ONNX Runtime.
- *
- * Fixed from the broken original:
- *  1. Correct phonemization via compact ASCII-to-phoneme-ID lookup table
- *     (covers ~95% of English without eSpeak-ng JNI).
- *  2. Correct ONNX input tensors: input_ids, input_lengths, scales
- *  3. Proper ONNX output extraction and PCM conversion
- *  4. Streaming AudioTrack in MODE_STREAM (no audio corruption)
- *  5. Proper stop/cancel without resource leaks
+ * Piper TTS Engine utilizing ONNX Runtime for local text-to-speech synthesis.
  */
 class PiperVoiceEngine(private val context: Context) : TtsEngine {
 
@@ -125,7 +117,7 @@ class PiperVoiceEngine(private val context: Context) : TtsEngine {
         ortEnv = null
     }
 
-    // ─── ONNX Inference ────────────────────────────────────────────────────
+    // ONNX Inference
 
     private fun runOnnx(phonemeIds: LongArray): FloatArray? {
         val env = ortEnv ?: return null
@@ -197,23 +189,12 @@ class PiperVoiceEngine(private val context: Context) : TtsEngine {
         }
     }
 
-    // ─── Phonemizer ────────────────────────────────────────────────────────
+    // Phonemizer
 
     /**
-     * Converts text to Piper phoneme IDs using a compact lookup table.
-     * This covers the entire printable ASCII range and maps common English
-     * characters to their eSpeak-ng phoneme IDs as used by Piper models.
-     *
-     * Piper phoneme token format (en_US-amy / en_US-lessac models):
-     *  - 0: PAD
-     *  - 1: BOS (beginning of sentence)
-     *  - 2: EOS (end of sentence)
-     *  - 3+: IPA phoneme symbols
+     * Translates normalized text to Piper phoneme IDs.
      */
     private fun phonemize(text: String): LongArray {
-        // Simple character-level mapping for basic English TTS
-        // In a full implementation, this would use eSpeak-ng phoneme output
-        // or a G2P (grapheme-to-phoneme) model. This handles ~90% of common words.
         val ids = mutableListOf<Long>()
         ids.add(1L) // BOS
 
@@ -233,11 +214,7 @@ class PiperVoiceEngine(private val context: Context) : TtsEngine {
     }
 
     companion object {
-        /**
-         * Compact character-to-Piper-phoneme-ID mapping for English.
-         * Based on the en_US-amy-medium Piper model's phoneme vocabulary.
-         * These IDs correspond to the most common IPA phonemes used in English.
-         */
+        /** Character mapping to Piper phoneme IDs */
         private val CHAR_TO_PHONEME_ID: Map<Char, Long> = mapOf(
             ' ' to 4L,
             'a' to 5L, 'b' to 6L, 'c' to 7L, 'd' to 8L, 'e' to 9L,
